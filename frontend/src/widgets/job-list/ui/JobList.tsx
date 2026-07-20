@@ -10,6 +10,7 @@ import {
   selectListError,
   selectListStatus,
 } from '@/entities/job/model/selectors';
+import { RequestStatus } from '@/entities/job/model/types';
 import { useAppDispatch, useAppSelector } from '@/shared/lib/hooks';
 import { ErrorBanner } from '@/shared/ui/ErrorBanner/ErrorBanner';
 import { Spinner } from '@/shared/ui/Spinner/Spinner';
@@ -40,7 +41,7 @@ export function JobList() {
         <Button
           variant="ghost"
           onClick={() => void dispatch(fetchJobs())}
-          disabled={status === 'loading'}
+          disabled={status === RequestStatus.Loading}
         >
           Refresh
         </Button>
@@ -48,11 +49,11 @@ export function JobList() {
 
       {error ? <ErrorBanner message={error} /> : null}
 
-      {status === 'loading' && list.length === 0 ? (
+      {status === RequestStatus.Loading && list.length === 0 ? (
         <Spinner label="Loading jobs…" />
       ) : null}
 
-      {status === 'succeeded' && list.length === 0 ? (
+      {status === RequestStatus.Succeeded && list.length === 0 ? (
         <p className={styles.empty}>No jobs yet. Create one on the left.</p>
       ) : null}
 

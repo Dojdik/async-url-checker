@@ -4,6 +4,7 @@ import {
   selectCancelStatus,
   selectJobDetails,
 } from '@/entities/job/model/selectors';
+import { RequestStatus } from '@/entities/job/model/types';
 import { useAppDispatch, useAppSelector } from '@/shared/lib/hooks';
 import { Button } from '@/shared/ui/Button/Button';
 import { ErrorBanner } from '@/shared/ui/ErrorBanner/ErrorBanner';
@@ -23,15 +24,17 @@ export function CancelJobButton() {
     ) : null;
   }
 
+  const loading = status === RequestStatus.Loading;
+
   return (
     <div className={styles.wrap}>
       {error ? <ErrorBanner message={error} /> : null}
       <Button
         variant="danger"
-        disabled={status === 'loading'}
+        disabled={loading}
         onClick={() => void dispatch(cancelJob(details.id))}
       >
-        {status === 'loading' ? 'Cancelling…' : 'Cancel job'}
+        {loading ? 'Cancelling…' : 'Cancel job'}
       </Button>
     </div>
   );

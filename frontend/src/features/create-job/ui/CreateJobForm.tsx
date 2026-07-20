@@ -4,6 +4,7 @@ import {
   selectCreateError,
   selectCreateStatus,
 } from '@/entities/job/model/selectors';
+import { RequestStatus } from '@/entities/job/model/types';
 import { useAppDispatch, useAppSelector } from '@/shared/lib/hooks';
 import { Button } from '@/shared/ui/Button/Button';
 import { ErrorBanner } from '@/shared/ui/ErrorBanner/ErrorBanner';
@@ -23,7 +24,7 @@ export function CreateJobForm() {
   const error = useAppSelector(selectCreateError);
   const [text, setText] = useState('https://example.com\nhttps://httpbin.org/status/404');
 
-  const loading = status === 'loading';
+  const loading = status === RequestStatus.Loading;
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();

@@ -1,16 +1,21 @@
-import type { ApiUrlStatus, JobStatus } from '@/entities/job/model/types';
+import {
+  ApiUrlStatus,
+  JobStatus,
+  type ApiUrlStatus as ApiUrlStatusType,
+  type JobStatus as JobStatusType,
+} from '@/entities/job/model/types';
 import styles from './StatusBadge.module.css';
 
-type Status = JobStatus | ApiUrlStatus;
+type Status = JobStatusType | ApiUrlStatusType;
 
 const LABELS: Record<Status, string> = {
-  pending: 'Pending',
-  in_progress: 'In progress',
-  completed: 'Completed',
-  cancelled: 'Cancelled',
-  failed: 'Failed',
-  success: 'Success',
-  error: 'Error',
+  [JobStatus.Pending]: 'Pending',
+  [JobStatus.InProgress]: 'In progress',
+  [JobStatus.Completed]: 'Completed',
+  [JobStatus.Cancelled]: 'Cancelled',
+  [JobStatus.Failed]: 'Failed',
+  [ApiUrlStatus.Success]: 'Success',
+  [ApiUrlStatus.Error]: 'Error',
 };
 
 export function StatusBadge({ status }: { status: Status }) {

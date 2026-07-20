@@ -13,9 +13,9 @@ import { ErrorBanner } from '@/shared/ui/ErrorBanner/ErrorBanner';
 import { Spinner } from '@/shared/ui/Spinner/Spinner';
 import { StatusBadge } from '@/shared/ui/StatusBadge/StatusBadge';
 import { UrlResultsTable } from './UrlResultsTable';
+import { RequestStatus } from '@/entities/job/model/types';
+import { JOB_DETAILS_POLL_MS } from '@/shared/config/ui';
 import styles from './JobDetails.module.css';
-
-const POLL_MS = 2000;
 
 export function JobDetails() {
   const dispatch = useAppDispatch();
@@ -31,7 +31,7 @@ export function JobDetails() {
     }
     const timer = window.setInterval(() => {
       void dispatch(fetchJobDetails(activeId));
-    }, POLL_MS);
+    }, JOB_DETAILS_POLL_MS);
     return () => window.clearInterval(timer);
   }, [activeId, details?.status, details?.id, dispatch]);
 
@@ -69,13 +69,13 @@ export function JobDetails() {
 
       {error ? <ErrorBanner message={error} /> : null}
 
-      {status === 'loading' && !details ? (
+      {status === RequestStatus.Loading && !details ? (
         <Spinner label="Loading details…" />
       ) : null}
 
       {details ? <UrlResultsTable urls={details.urls} /> : null}
 
-      {status === 'loading' && details ? (
+      {status === RequestStatus.Loading && details ? (
         <div className={styles.poll}>
           <Spinner label="Refreshing…" />
         </div>
