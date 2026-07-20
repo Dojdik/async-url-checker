@@ -18,6 +18,7 @@ import {
 import type { AppConfiguration } from '../config/configuration';
 import { HTTP_CLIENT, JOB_REPOSITORY } from '../common/tokens';
 import { toErrorMessage } from '../common/errors';
+import { deserializeJobFromIpc, isMasterMessage } from '../common/job-ipc';
 import { randomDelay } from '../utils';
 
 /**
@@ -44,12 +45,33 @@ export class WorkerProcessor implements OnModuleInit {
   }
 
   onModuleInit(): void {
-    process.on('message', (message: IMasterMessage) => {
-      if (message?.type === 'process_job') {
-        void this.processJob(message.job);
-      } else if (message?.type === 'cancel_job') {
-        this.cancelledJobs.add(message.jobId);
-        this.logger.log(`Cancel received for job ${message.jobId}`);
+    process.on('message', (raw: unknown) => {
+      if (!isMasterMessage(raw)) {
+        this.logger.warn('Ignoring invalid master IPC message');
+        return;
+      }
+
+      if (raw.type === 'process_job') {
+        try {
+          const job = deserializeJobFromIpc(
+            (raw as Extract<IMasterMessage, { type: 'process_job' }>).job,
+          );
+          void this.processJob(job);
+        } catch (error) {
+          this.logger.error(
+            `Failed to deserialize process_job: ${toErrorMessage(error)}`,
+          );
+        }
+        return;
+      }
+
+      if (raw.type === 'cancel_job') {
+        const jobId = (raw as Extract<IMasterMessage, { type: 'cancel_job' }>)
+          .jobId;
+        if (typeof jobId === 'number') {
+          this.cancelledJobs.add(jobId);
+          this.logger.log(`Cancel received for job ${jobId}`);
+        }
       }
     });
 
