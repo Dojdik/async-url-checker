@@ -14,5 +14,10 @@ export interface IJobRepository {
     httpStatus?: number,
     error?: string,
   ): Promise<void>;
+  /**
+   * Marks job as cancelled and pending URLs as cancelled.
+   * In-progress URLs are left as-is (may finish).
+   */
+  cancel(id: number): Promise<IJob | null>;
   delete(id: number): Promise<boolean>;
 }

@@ -15,6 +15,15 @@ export class JobQueueService implements IJobQueue {
     return this.queue.shift() ?? null;
   }
 
+  async remove(jobId: number): Promise<IJob | null> {
+    const index = this.queue.findIndex((job) => job.id === jobId);
+    if (index === -1) {
+      return null;
+    }
+    const [removed] = this.queue.splice(index, 1);
+    return removed ?? null;
+  }
+
   async size(): Promise<number> {
     return this.queue.length;
   }

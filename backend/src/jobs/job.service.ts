@@ -1,4 +1,6 @@
 import {
+  BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
@@ -19,7 +21,13 @@ export class JobService {
     private readonly dispatcher: JobDispatcherService,
   ) {}
 
-  async create(urls: string[]): Promise<Pick<IJob, 'id' | 'status' | 'createdAt'>> {
+  async create(
+    urls: string[],
+  ): Promise<Pick<IJob, 'id' | 'status' | 'createdAt'>> {
+    if (!urls?.length) {
+      throw new BadRequestException('urls must not be empty');
+    }
+
     const job = this.factory.create(urls);
     await this.repository.save(job);
     await this.dispatcher.dispatchJob(job);
@@ -48,10 +56,25 @@ export class JobService {
     return job;
   }
 
-  async delete(id: number): Promise<void> {
-    const deleted = await this.repository.delete(id);
-    if (!deleted) {
+  /**
+   * DELETE /api/jobs/:id — mark cancelled and stop not-started URLs.
+   */
+  async cancel(id: number): Promise<IJob> {
+    const job = await this.repository.findById(id);
+    if (!job) {
       throw new NotFoundException('Job not found');
     }
+
+    if (
+      job.status === 'completed' ||
+      job.status === 'failed' ||
+      job.status === 'cancelled'
+    ) {
+      throw new ConflictException(
+        `Job cannot be cancelled in status "${job.status}"`,
+      );
+    }
+
+    return this.dispatcher.cancelJob(id);
   }
 }

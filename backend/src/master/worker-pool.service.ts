@@ -17,6 +17,8 @@ export class WorkerPoolService implements OnModuleDestroy {
   private readonly logger = new Logger(WorkerPoolService.name);
   private workers: Worker[] = [];
   private readonly availableWorkers = new Set<Worker>();
+  /** jobId -> worker currently processing that job */
+  private readonly jobAssignments = new Map<number, Worker>();
   private readonly maxWorkers: number;
   private isShuttingDown = false;
   private started = false;
@@ -42,9 +44,6 @@ export class WorkerPoolService implements OnModuleDestroy {
     this.createWorkers();
   }
 
-  /**
-   * Ensure cluster.fork() has a valid entry script (fails when argv[1] is unset).
-   */
   private configureClusterExec(): void {
     const execArgv = process.execArgv.filter(
       (arg) => !arg.startsWith('--inspect'),
@@ -93,6 +92,12 @@ export class WorkerPoolService implements OnModuleDestroy {
       this.workers = this.workers.filter((w) => w.id !== worker.id);
       this.availableWorkers.delete(worker);
 
+      for (const [jobId, assigned] of this.jobAssignments) {
+        if (assigned.id === worker.id) {
+          this.jobAssignments.delete(jobId);
+        }
+      }
+
       if (this.isShuttingDown) {
         return;
       }
@@ -111,6 +116,7 @@ export class WorkerPoolService implements OnModuleDestroy {
 
     const worker = this.availableWorkers.values().next().value as Worker;
     this.availableWorkers.delete(worker);
+    this.jobAssignments.set(job.id, worker);
 
     const message: IMasterMessage = {
       type: 'process_job',
@@ -118,36 +124,48 @@ export class WorkerPoolService implements OnModuleDestroy {
     };
 
     if (!worker.isConnected()) {
+      this.jobAssignments.delete(job.id);
       throw new Error(`Worker ${worker.id} is not connected`);
     }
 
     worker.send(message);
 
+    // Allow enough time for HEAD + up to 10s delay per URL batch
+    const timeoutMs = Math.max(60_000, job.urls.length * 12_000);
+
     const timeout = setTimeout(() => {
       this.logger.warn(`Worker ${worker.id} timed out on job ${job.id}`);
-      this.availableWorkers.add(worker);
+      this.releaseWorker(worker, job.id);
       this.eventEmitter.emit('job.timeout', { jobId: job.id });
       worker.off('message', onMessage);
-    }, 30_000);
+    }, timeoutMs);
 
     const onMessage = (msg: IWorkerMessage) => {
       if (msg.jobId !== job.id) {
         return;
       }
-      if (msg.type !== 'complete' && msg.type !== 'error') {
+
+      if (msg.type === 'url_progress') {
+        this.eventEmitter.emit('job.url_progress', {
+          jobId: job.id,
+          progress: msg.payload,
+        });
+        return;
+      }
+
+      if (
+        msg.type !== 'complete' &&
+        msg.type !== 'error' &&
+        msg.type !== 'cancelled'
+      ) {
         return;
       }
 
       clearTimeout(timeout);
-      this.availableWorkers.add(worker);
+      this.releaseWorker(worker, job.id);
       worker.off('message', onMessage);
 
-      if (msg.type === 'complete') {
-        this.eventEmitter.emit('worker.complete', {
-          workerId: worker.id,
-          jobId: job.id,
-          result: msg.payload,
-        });
+      if (msg.type === 'complete' || msg.type === 'cancelled') {
         this.eventEmitter.emit('job.complete', {
           jobId: job.id,
           result: msg.payload,
@@ -164,6 +182,32 @@ export class WorkerPoolService implements OnModuleDestroy {
     worker.on('message', onMessage);
   }
 
+  /**
+   * Ask the worker processing this job to stop picking up pending URLs.
+   * @returns true if a running worker was notified
+   */
+  cancelJob(jobId: number): boolean {
+    const worker = this.jobAssignments.get(jobId);
+    if (!worker || !worker.isConnected()) {
+      return false;
+    }
+
+    const message: IMasterMessage = {
+      type: 'cancel_job',
+      jobId,
+    };
+    worker.send(message);
+    this.logger.log(`Cancel signal sent to worker ${worker.id} for job ${jobId}`);
+    return true;
+  }
+
+  private releaseWorker(worker: Worker, jobId: number): void {
+    this.jobAssignments.delete(jobId);
+    if (!this.isShuttingDown && worker.isConnected()) {
+      this.availableWorkers.add(worker);
+    }
+  }
+
   private disconnectWorkers(): void {
     for (const worker of this.workers) {
       try {
@@ -175,6 +219,7 @@ export class WorkerPoolService implements OnModuleDestroy {
     }
     this.workers = [];
     this.availableWorkers.clear();
+    this.jobAssignments.clear();
   }
 
   getAvailableWorkersCount(): number {

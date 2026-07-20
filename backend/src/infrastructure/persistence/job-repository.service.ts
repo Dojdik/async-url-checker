@@ -26,6 +26,10 @@ export class JobRepositoryService implements IJobRepository {
     if (!job) {
       throw new NotFoundException(`Job ${id} not found`);
     }
+    // Do not overwrite terminal cancelled state with later worker results
+    if (job.status === 'cancelled' && status !== 'cancelled') {
+      return;
+    }
     job.status = status;
     job.updatedAt = new Date();
   }
@@ -47,6 +51,12 @@ export class JobRepositoryService implements IJobRepository {
       throw new NotFoundException(`URL ${url} not found in job ${jobId}`);
     }
 
+    // pending must not revive a cancelled URL; completed/failed/in_progress may
+    // (worker already started the URL before cancel arrived on master)
+    if (urlEntity.status === 'cancelled' && status === 'pending') {
+      return;
+    }
+
     urlEntity.status = status;
     if (httpStatus !== undefined) {
       urlEntity.httpStatus = httpStatus;
@@ -54,10 +64,34 @@ export class JobRepositoryService implements IJobRepository {
     if (error !== undefined) {
       urlEntity.error = error;
     }
-    if (status === 'completed' || status === 'failed') {
+    if (
+      status === 'completed' ||
+      status === 'failed' ||
+      status === 'cancelled'
+    ) {
       urlEntity.endedAt = new Date();
     }
     job.updatedAt = new Date();
+  }
+
+  async cancel(id: number): Promise<IJob | null> {
+    const job = this.jobs.get(id);
+    if (!job) {
+      return null;
+    }
+
+    job.status = 'cancelled';
+    job.updatedAt = new Date();
+
+    // Only not-started URLs are cancelled. in_progress may still complete.
+    for (const url of job.urls) {
+      if (url.status === 'pending') {
+        url.status = 'cancelled';
+        url.endedAt = new Date();
+      }
+    }
+
+    return job;
   }
 
   async delete(id: number): Promise<boolean> {
