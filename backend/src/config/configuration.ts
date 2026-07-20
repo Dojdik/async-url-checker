@@ -1,13 +1,17 @@
 /**
  * Central place for all environment variables.
  *
- * | Env                    | Config key             | Default | Description                          |
- * |------------------------|------------------------|---------|--------------------------------------|
- * | PORT                   | port                   | 3001    | HTTP port (master only)              |
- * | WORKERS_COUNT          | workersCount           | 2       | Cluster worker processes             |
- * | HTTP_TIMEOUT_MS        | httpTimeoutMs          | 10000   | HEAD request timeout                 |
- * | MAX_CONCURRENT_URLS    | maxConcurrentUrls      | 5       | Parallel HEAD requests per job       |
- * | URL_DELAY_MAX_SECONDS  | urlDelayMaxSeconds     | 10      | Max artificial delay after HEAD (s)  |
+ * | Env                      | Config key              | Default | Description                          |
+ * |--------------------------|-------------------------|---------|--------------------------------------|
+ * | PORT                     | port                    | 3001    | HTTP port (master only)              |
+ * | WORKERS_COUNT            | workersCount            | 2       | Cluster worker processes             |
+ * | HTTP_TIMEOUT_MS          | httpTimeoutMs           | 10000   | HEAD request timeout                 |
+ * | MAX_CONCURRENT_URLS      | maxConcurrentUrls       | 5       | Parallel HEAD requests per job       |
+ * | URL_DELAY_MAX_SECONDS    | urlDelayMaxSeconds      | 10      | Max artificial delay after HEAD (s)  |
+ * | JOB_TIMEOUT_BASE_MS      | jobTimeoutBaseMs        | 60000   | Min wall-clock budget per job        |
+ * | JOB_TIMEOUT_PER_URL_MS   | jobTimeoutPerUrlMs      | 12000   | Extra budget per URL in a job        |
+ *
+ * Job assign timeout = max(jobTimeoutBaseMs, urls.length * jobTimeoutPerUrlMs)
  *
  * Copy `.env.example` → `.env` to override. Loaded by Nest ConfigModule.
  */
@@ -23,6 +27,10 @@ export interface AppConfiguration {
   maxConcurrentUrls: number;
   /** Random delay ceiling in seconds after HEAD. Env: URL_DELAY_MAX_SECONDS */
   urlDelayMaxSeconds: number;
+  /** Minimum job wall-clock timeout (ms). Env: JOB_TIMEOUT_BASE_MS */
+  jobTimeoutBaseMs: number;
+  /** Per-URL addition to job timeout (ms). Env: JOB_TIMEOUT_PER_URL_MS */
+  jobTimeoutPerUrlMs: number;
 }
 
 function intEnv(name: string, fallback: number): number {
@@ -56,6 +64,8 @@ export function loadConfiguration(): AppConfiguration {
     httpTimeoutMs: intEnv('HTTP_TIMEOUT_MS', 10_000),
     maxConcurrentUrls: intEnv('MAX_CONCURRENT_URLS', 5),
     urlDelayMaxSeconds: intEnv('URL_DELAY_MAX_SECONDS', 10),
+    jobTimeoutBaseMs: intEnv('JOB_TIMEOUT_BASE_MS', 60_000),
+    jobTimeoutPerUrlMs: intEnv('JOB_TIMEOUT_PER_URL_MS', 12_000),
   };
 
   assertRange('port', config.port, 1, 65535, 'PORT');
@@ -75,6 +85,29 @@ export function loadConfiguration(): AppConfiguration {
     120,
     'URL_DELAY_MAX_SECONDS',
   );
+  assertRange(
+    'jobTimeoutBaseMs',
+    config.jobTimeoutBaseMs,
+    1_000,
+    3_600_000,
+    'JOB_TIMEOUT_BASE_MS',
+  );
+  assertRange(
+    'jobTimeoutPerUrlMs',
+    config.jobTimeoutPerUrlMs,
+    100,
+    600_000,
+    'JOB_TIMEOUT_PER_URL_MS',
+  );
 
   return config;
+}
+
+/** Wall-clock budget for a job on a worker. */
+export function computeJobTimeoutMs(
+  urlCount: number,
+  baseMs: number,
+  perUrlMs: number,
+): number {
+  return Math.max(baseMs, urlCount * perUrlMs);
 }

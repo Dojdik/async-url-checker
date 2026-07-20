@@ -158,6 +158,8 @@ cd frontend && npm run build && npm run preview
 | `HTTP_TIMEOUT_MS` | `10000` | 100–300000 | Таймаут HEAD-запроса (мс) |
 | `MAX_CONCURRENT_URLS` | `5` | 1–100 | Макс. одновременных HEAD **внутри одного job** |
 | `URL_DELAY_MAX_SECONDS` | `10` | 0–120 | Верхняя граница искусственной задержки после HEAD (с), случайно `0…N` |
+| `JOB_TIMEOUT_BASE_MS` | `60000` | 1000–3600000 | Мин. wall-clock таймаут задания на worker (мс) |
+| `JOB_TIMEOUT_PER_URL_MS` | `12000` | 100–600000 | Добавка к таймауту на каждый URL: `max(BASE, urls × PER_URL)` |
 
 #### Как задать
 
@@ -199,8 +201,9 @@ docker compose up --build
 | Больше заданий одновременно | ↑ `WORKERS_COUNT` (и CPU/RAM контейнера) |
 | Быстрее проверка URL внутри job | ↓ `URL_DELAY_MAX_SECONDS`, ↑ `MAX_CONCURRENT_URLS` |
 | Меньше нагрузки на целевые сайты | ↓ `MAX_CONCURRENT_URLS`, ↑ `URL_DELAY_MAX_SECONDS` |
-| Медленные/далёкие хосты | ↑ `HTTP_TIMEOUT_MS` |
+| Медленные/далёкие хосты | ↑ `HTTP_TIMEOUT_MS`, ↑ `JOB_TIMEOUT_*` |
 | Dev «быстрый» режим | `URL_DELAY_MAX_SECONDS=0`, `WORKERS_COUNT=2` |
+| Крупные jobs (много URL) | ↑ `JOB_TIMEOUT_PER_URL_MS` или `JOB_TIMEOUT_BASE_MS` |
 
 > **In-memory:** при рестарте backend все jobs теряются.  
 > **Cluster:** воркеры — отдельные процессы Node; в Docker не ставьте `WORKERS_COUNT` больше разумного числа CPU.
