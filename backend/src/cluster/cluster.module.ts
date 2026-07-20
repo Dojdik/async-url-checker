@@ -3,13 +3,13 @@ import cluster from 'node:cluster';
 import { IS_MASTER, IS_WORKER, WORKER_ID } from '../common/tokens';
 
 export interface ClusterModuleOptions {
-  workers: number;
   module: Type<unknown>;
   workerModule: Type<unknown>;
 }
 
 /**
  * Loads Master or Worker Nest module depending on the process role.
+ * Worker count is configured via WORKERS_COUNT (see src/config/configuration.ts).
  */
 export class ClusterModule {
   static forRoot(options: ClusterModuleOptions): DynamicModule {
@@ -24,7 +24,7 @@ export class ClusterModule {
         { provide: IS_WORKER, useValue: isWorker },
         {
           provide: WORKER_ID,
-          useValue: isWorker ? cluster.worker?.id ?? null : null,
+          useValue: isWorker ? (cluster.worker?.id ?? null) : null,
         },
       ],
       exports: [IS_MASTER, IS_WORKER, WORKER_ID],

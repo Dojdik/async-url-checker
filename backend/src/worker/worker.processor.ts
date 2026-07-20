@@ -1,6 +1,7 @@
 import cluster from 'node:cluster';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { IHttpClient } from '../interfaces/http-client.interface';
 import type { IJob } from '../interfaces/job.interface';
 import type { IJobRepository } from '../interfaces/job-repository.interface';
@@ -8,26 +9,32 @@ import type { IJobUrl } from '../interfaces/job-url.interface';
 import type { IMasterMessage } from '../interfaces/master-message.interface';
 import type { IWorkerMessage } from '../interfaces/worker-message.interface';
 import type { JobStatus } from '../domain/types/job-status.type';
+import type { AppConfiguration } from '../config/configuration';
 import { HTTP_CLIENT, JOB_REPOSITORY } from '../common/tokens';
 import { randomDelay } from '../utils';
 
 /**
  * Worker-side job processor:
  * - HEAD each URL
- * - artificial delay 0–10s before saving the result
- * - at most 5 concurrent HEAD requests per job
+ * - artificial delay before saving the result (URL_DELAY_MAX_SECONDS)
+ * - limited concurrent HEAD requests per job (MAX_CONCURRENT_URLS)
  */
 @Injectable()
 export class WorkerProcessor implements OnModuleInit {
   private readonly logger = new Logger(WorkerProcessor.name);
-  private readonly maxConcurrentUrls = 5;
+  private readonly maxConcurrentUrls: number;
+  private readonly urlDelayMaxSeconds: number;
   /** Jobs that received a cancel signal from the master */
   private readonly cancelledJobs = new Set<number>();
 
   constructor(
     @Inject(HTTP_CLIENT) private readonly httpClient: IHttpClient,
     @Inject(JOB_REPOSITORY) private readonly repository: IJobRepository,
-  ) {}
+    config: ConfigService<AppConfiguration, true>,
+  ) {
+    this.maxConcurrentUrls = config.get('maxConcurrentUrls', { infer: true });
+    this.urlDelayMaxSeconds = config.get('urlDelayMaxSeconds', { infer: true });
+  }
 
   onModuleInit(): void {
     process.on('message', (message: IMasterMessage) => {
@@ -187,8 +194,8 @@ export class WorkerProcessor implements OnModuleInit {
 
       const response = await this.httpClient.head(urlEntity.url);
 
-      // Artificial delay 0–10s before persisting the result
-      const waitMs = randomDelay();
+      // Artificial delay 0..URL_DELAY_MAX_SECONDS before persisting the result
+      const waitMs = randomDelay(this.urlDelayMaxSeconds);
       this.logger.debug(
         `Worker ${workerId}: delaying ${waitMs}ms for ${urlEntity.url}`,
       );

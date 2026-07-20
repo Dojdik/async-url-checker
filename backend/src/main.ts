@@ -1,22 +1,26 @@
 import { NestFactory } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ValidationPipe, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import cluster from 'node:cluster';
 import { AppModule } from './app.module';
 import { WorkerPoolService } from './master/worker-pool.service';
+import type { AppConfiguration } from './config/configuration';
 
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
 
   if (cluster.isPrimary) {
     const app = await NestFactory.create(AppModule);
+    const config = app.get(ConfigService<AppConfiguration, true>);
+    const port = config.get('port', { infer: true });
 
-    const config = new DocumentBuilder()
+    const swagger = new DocumentBuilder()
       .setTitle('Async URL Checker')
       .setDescription('Distributed async URL checker (master/worker cluster)')
       .setVersion('1.0')
       .build();
-    const documentFactory = () => SwaggerModule.createDocument(app, config);
+    const documentFactory = () => SwaggerModule.createDocument(app, swagger);
     SwaggerModule.setup('docs', app, documentFactory);
 
     app.setGlobalPrefix('/api');
@@ -26,8 +30,6 @@ async function bootstrap(): Promise<void> {
         whitelist: true,
       }),
     );
-
-    const port = Number(process.env.PORT) || 3001;
 
     try {
       await app.listen(port);
@@ -42,13 +44,13 @@ async function bootstrap(): Promise<void> {
       throw error;
     }
 
-    logger.log(`Master listening on port ${port}`);
+    logger.log(
+      `Master listening on port ${port} (workers=${config.get('workersCount', { infer: true })})`,
+    );
 
-    // Fork workers only after the HTTP server is bound successfully
     const workerPool = app.get(WorkerPoolService);
     workerPool.start();
   } else {
-    // Avoid unhandled EPIPE when the master restarts under --watch
     process.on('disconnect', () => {
       process.exit(0);
     });

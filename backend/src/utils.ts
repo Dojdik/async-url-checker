@@ -1,6 +1,3 @@
-/** Max artificial delay after HEAD before persisting result (seconds). */
-const RANDOM_DELAY_MAX_SECONDS = 10;
-
 export function dtoQueryNumber({ value }: { value: unknown }): number {
   if (value === undefined || value === null || value === '') {
     return 0;
@@ -10,9 +7,10 @@ export function dtoQueryNumber({ value }: { value: unknown }): number {
 }
 
 /**
- * Random delay in milliseconds in range [0, 10] seconds (inclusive of whole seconds).
+ * Random delay in milliseconds in range [0, maxSeconds] (whole seconds).
+ * Default maxSeconds matches URL_DELAY_MAX_SECONDS (see configuration.ts).
  */
-export function randomDelay(): number {
-  const seconds = Math.floor(Math.random() * (RANDOM_DELAY_MAX_SECONDS + 1));
+export function randomDelay(maxSeconds = 10): number {
+  const seconds = Math.floor(Math.random() * (maxSeconds + 1));
   return seconds * 1000;
 }

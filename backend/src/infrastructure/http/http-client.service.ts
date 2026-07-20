@@ -1,9 +1,15 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { IHttpClient } from '../../interfaces/http-client.interface';
+import type { AppConfiguration } from '../../config/configuration';
 
 @Injectable()
 export class HttpClientService implements IHttpClient {
-  private readonly timeoutMs = 10_000;
+  private readonly timeoutMs: number;
+
+  constructor(config: ConfigService<AppConfiguration, true>) {
+    this.timeoutMs = config.get('httpTimeoutMs', { infer: true });
+  }
 
   async head(url: string): Promise<{ status: number }> {
     const controller = new AbortController();
