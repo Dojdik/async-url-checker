@@ -1,0 +1,39 @@
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
+import { Job } from '../common/Job';
+
+@Injectable()
+export class JobsService {
+    private jobsList: Job[] = []
+    private jobsMap: Map<number, Job> = new Map()
+
+    async create(urls: string[]) {
+        const job = new Job(urls)
+        this.jobsMap[job.id] = job
+        this.jobsList.push(job)
+    }
+
+    async findAll(offset: number, count: number) {
+        return this.jobsList.slice(offset, count).map(x => ({
+            id: x.id,
+            createdAt: x.createdAt,
+            status: x.status
+        }))
+    }
+
+    async find(id: number): Promise<Job> {
+        if (this.jobsMap[id])
+            return this.jobsMap[id]
+
+        throw new NotFoundException("Job not found")
+    }
+
+    async delete(id: number) {
+        return this.jobsList.splice(id-1, 1)
+    }
+
+    @Cron('* * * * * *')
+    handleCron() {
+        
+    }
+}
