@@ -12,13 +12,14 @@ import type { IJobRepository } from '../interfaces/job-repository.interface';
 import { JOB_FACTORY, JOB_REPOSITORY } from '../common/tokens';
 import { JobDispatcherService } from '../master/job-dispatcher.service';
 import type { JobListItemDto, JobUrlStatsDto } from './dto/job-list-item.dto';
-import type {
+import {
   ApiUrlStatus,
-  JobDetailDto,
-  JobUrlDetailDto,
+  type ApiUrlStatus as ApiUrlStatusType,
+  type JobDetailDto,
+  type JobUrlDetailDto,
 } from './dto/job-detail.dto';
 import type { IJobUrl } from '../interfaces/job-url.interface';
-import type { UrlStatus } from '../domain/types/url-status.type';
+import { UrlStatus, type UrlStatus as UrlStatusType } from '../domain/types/url-status.type';
 import { canCancelJob } from '../domain/types/job-status.type';
 import { countUrlStatuses } from '../domain/job-rules';
 
@@ -70,11 +71,11 @@ export class JobService {
   private buildUrlStats(job: IJob): JobUrlStatsDto {
     const counts = countUrlStatuses(job.urls);
     return {
-      succeeded: counts.completed,
-      failed: counts.failed,
-      pending: counts.pending,
-      in_progress: counts.in_progress,
-      cancelled: counts.cancelled,
+      succeeded: counts[UrlStatus.Completed],
+      failed: counts[UrlStatus.Failed],
+      pending: counts[UrlStatus.Pending],
+      in_progress: counts[UrlStatus.InProgress],
+      cancelled: counts[UrlStatus.Cancelled],
     };
   }
 
@@ -114,12 +115,12 @@ export class JobService {
     };
   }
 
-  private toApiUrlStatus(status: UrlStatus): ApiUrlStatus {
+  private toApiUrlStatus(status: UrlStatusType): ApiUrlStatusType {
     switch (status) {
-      case 'completed':
-        return 'success';
-      case 'failed':
-        return 'error';
+      case UrlStatus.Completed:
+        return ApiUrlStatus.Success;
+      case UrlStatus.Failed:
+        return ApiUrlStatus.Error;
       default:
         return status;
     }

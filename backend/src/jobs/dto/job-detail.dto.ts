@@ -1,16 +1,25 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { JOB_STATUSES, type JobStatus } from '../../domain/types/job-status.type';
+import { UrlStatus } from '../../domain/types/url-status.type';
 
 /** API-facing URL status (maps domain completed→success, failed→error). */
-export const API_URL_STATUSES = [
-  'pending',
-  'in_progress',
-  'success',
-  'error',
-  'cancelled',
-] as const;
+export const ApiUrlStatus = {
+  Pending: UrlStatus.Pending,
+  InProgress: UrlStatus.InProgress,
+  Success: 'success',
+  Error: 'error',
+  Cancelled: UrlStatus.Cancelled,
+} as const;
 
-export type ApiUrlStatus = (typeof API_URL_STATUSES)[number];
+export type ApiUrlStatus = (typeof ApiUrlStatus)[keyof typeof ApiUrlStatus];
+
+export const API_URL_STATUSES = [
+  ApiUrlStatus.Pending,
+  ApiUrlStatus.InProgress,
+  ApiUrlStatus.Success,
+  ApiUrlStatus.Error,
+  ApiUrlStatus.Cancelled,
+] as const satisfies readonly ApiUrlStatus[];
 
 export class JobUrlDetailDto {
   @ApiProperty()

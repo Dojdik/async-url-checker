@@ -3,22 +3,23 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import type { IJob } from '../interfaces/job.interface';
 import type { IJobQueue } from '../interfaces/job-queue.interface';
 import type { IJobRepository } from '../interfaces/job-repository.interface';
-import type { JobStatus } from '../domain/types/job-status.type';
-import type { UrlStatus } from '../domain/types/url-status.type';
+import { JobStatus, type JobStatus as JobStatusType } from '../domain/types/job-status.type';
+import { UrlStatus, type UrlStatus as UrlStatusType } from '../domain/types/url-status.type';
 import type { IUrlProgressPayload } from '../interfaces/worker-message.interface';
 import { JOB_QUEUE, JOB_REPOSITORY } from '../common/tokens';
+import { AppEvents } from '../common/app-events';
 import { toErrorMessage } from '../common/errors';
 import { WorkerPoolService } from './worker-pool.service';
 
 interface JobUrlResult {
   url: string;
-  status: UrlStatus;
+  status: UrlStatusType;
   httpStatus?: number;
   error?: string;
 }
 
 interface JobCompleteResult {
-  status: JobStatus;
+  status: JobStatusType;
   totalUrls?: number;
   failedUrls?: number;
   cancelledUrls?: number;
@@ -40,12 +41,12 @@ export class JobDispatcherService {
     @Inject(JOB_QUEUE) private readonly queue: IJobQueue,
     @Inject(JOB_REPOSITORY) private readonly repository: IJobRepository,
   ) {
-    this.eventEmitter.on('worker.ready', () => {
+    this.eventEmitter.on(AppEvents.WorkerReady, () => {
       void this.processQueue();
     });
 
     this.eventEmitter.on(
-      'job.url_progress',
+      AppEvents.JobUrlProgress,
       ({
         jobId,
         progress,
@@ -58,18 +59,18 @@ export class JobDispatcherService {
     );
 
     this.eventEmitter.on(
-      'job.complete',
+      AppEvents.JobComplete,
       ({ jobId, result }: { jobId: number; result?: JobCompleteResult }) => {
         void this.onJobComplete(jobId, result);
       },
     );
 
-    this.eventEmitter.on('job.timeout', ({ jobId }: { jobId: number }) => {
+    this.eventEmitter.on(AppEvents.JobTimeout, ({ jobId }: { jobId: number }) => {
       void this.failJobUnlessCancelled(jobId, `Job ${jobId} timed out`);
     });
 
     this.eventEmitter.on(
-      'worker.error',
+      AppEvents.WorkerError,
       ({ jobId, error }: { jobId: number; error?: unknown }) => {
         void this.failJobUnlessCancelled(
           jobId,
@@ -129,12 +130,12 @@ export class JobDispatcherService {
     result?: JobCompleteResult,
   ): Promise<void> {
     this.logger.log(
-      `Job ${jobId} finished with status ${result?.status ?? 'completed'}`,
+      `Job ${jobId} finished with status ${result?.status ?? JobStatus.Completed}`,
     );
 
     try {
       const existing = await this.repository.findById(jobId);
-      const alreadyCancelled = existing?.status === 'cancelled';
+      const alreadyCancelled = existing?.status === JobStatus.Cancelled;
 
       await this.applyUrlResults(jobId, result?.results, {
         onlyFinished: alreadyCancelled,
@@ -143,7 +144,7 @@ export class JobDispatcherService {
       if (!alreadyCancelled) {
         await this.repository.updateStatus(
           jobId,
-          result?.status ?? 'completed',
+          result?.status ?? JobStatus.Completed,
         );
       }
     } catch (error) {
@@ -172,8 +173,8 @@ export class JobDispatcherService {
     for (const item of results) {
       if (
         options.onlyFinished &&
-        item.status !== 'completed' &&
-        item.status !== 'failed'
+        item.status !== UrlStatus.Completed &&
+        item.status !== UrlStatus.Failed
       ) {
         continue;
       }
@@ -194,8 +195,8 @@ export class JobDispatcherService {
     this.logger.warn(logMessage);
     try {
       const job = await this.repository.findById(jobId);
-      if (job?.status !== 'cancelled') {
-        await this.repository.updateStatus(jobId, 'failed');
+      if (job?.status !== JobStatus.Cancelled) {
+        await this.repository.updateStatus(jobId, JobStatus.Failed);
       }
     } catch (error) {
       this.logger.error(
@@ -226,12 +227,12 @@ export class JobDispatcherService {
         }
 
         const current = await this.repository.findById(job.id);
-        if (!current || current.status === 'cancelled') {
+        if (!current || current.status === JobStatus.Cancelled) {
           continue;
         }
 
         try {
-          await this.repository.updateStatus(job.id, 'in_progress');
+          await this.repository.updateStatus(job.id, JobStatus.InProgress);
           await this.workerPool.assignJob(job);
         } catch (error) {
           this.logger.error(

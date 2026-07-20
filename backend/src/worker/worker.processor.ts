@@ -6,10 +6,16 @@ import type { IHttpClient } from '../interfaces/http-client.interface';
 import type { IJob } from '../interfaces/job.interface';
 import type { IJobRepository } from '../interfaces/job-repository.interface';
 import type { IJobUrl } from '../interfaces/job-url.interface';
-import type { IMasterMessage } from '../interfaces/master-message.interface';
-import type { IWorkerMessage } from '../interfaces/worker-message.interface';
-import type { JobStatus } from '../domain/types/job-status.type';
-import type { UrlStatus } from '../domain/types/url-status.type';
+import {
+  MasterMessageType,
+  type IMasterMessage,
+} from '../interfaces/master-message.interface';
+import {
+  WorkerMessageType,
+  type IWorkerMessage,
+} from '../interfaces/worker-message.interface';
+import { JobStatus, type JobStatus as JobStatusType } from '../domain/types/job-status.type';
+import { UrlStatus, type UrlStatus as UrlStatusType } from '../domain/types/url-status.type';
 import {
   cancelPendingUrls,
   countUrlStatuses,
@@ -51,10 +57,13 @@ export class WorkerProcessor implements OnModuleInit {
         return;
       }
 
-      if (raw.type === 'process_job') {
+      if (raw.type === MasterMessageType.ProcessJob) {
         try {
           const job = deserializeJobFromIpc(
-            (raw as Extract<IMasterMessage, { type: 'process_job' }>).job,
+            (raw as Extract<
+              IMasterMessage,
+              { type: typeof MasterMessageType.ProcessJob }
+            >).job,
           );
           void this.processJob(job);
         } catch (error) {
@@ -65,9 +74,13 @@ export class WorkerProcessor implements OnModuleInit {
         return;
       }
 
-      if (raw.type === 'cancel_job') {
-        const jobId = (raw as Extract<IMasterMessage, { type: 'cancel_job' }>)
-          .jobId;
+      if (raw.type === MasterMessageType.CancelJob) {
+        const jobId = (
+          raw as Extract<
+            IMasterMessage,
+            { type: typeof MasterMessageType.CancelJob }
+          >
+        ).jobId;
         if (typeof jobId === 'number') {
           this.cancelledJobs.add(jobId);
           this.logger.log(`Cancel received for job ${jobId}`);
@@ -84,7 +97,7 @@ export class WorkerProcessor implements OnModuleInit {
       process.exit(0);
     });
 
-    this.sendToMaster({ type: 'ready' });
+    this.sendToMaster({ type: WorkerMessageType.Ready });
   }
 
   private isCancelled(jobId: number): boolean {
@@ -97,7 +110,7 @@ export class WorkerProcessor implements OnModuleInit {
 
     try {
       await this.repository.save(job);
-      await this.repository.updateStatus(job.id, 'in_progress');
+      await this.repository.updateStatus(job.id, JobStatus.InProgress);
 
       await this.processUrlsWithConcurrency(job);
 
@@ -113,13 +126,16 @@ export class WorkerProcessor implements OnModuleInit {
 
       const counts = countUrlStatuses(job.urls);
       this.sendToMaster({
-        type: status === 'cancelled' ? 'cancelled' : 'complete',
+        type:
+          status === JobStatus.Cancelled
+            ? WorkerMessageType.Cancelled
+            : WorkerMessageType.Complete,
         jobId: job.id,
         payload: {
           status,
           totalUrls: job.urls.length,
-          failedUrls: counts.failed,
-          cancelledUrls: counts.cancelled,
+          failedUrls: counts[UrlStatus.Failed],
+          cancelledUrls: counts[UrlStatus.Cancelled],
           results: job.urls.map((u) => ({
             url: u.url,
             status: u.status,
@@ -132,13 +148,13 @@ export class WorkerProcessor implements OnModuleInit {
       const message = toErrorMessage(error);
       try {
         if (!this.isCancelled(job.id)) {
-          await this.repository.updateStatus(job.id, 'failed');
+          await this.repository.updateStatus(job.id, JobStatus.Failed);
         }
       } catch {
         // repository may not have the job yet
       }
       this.sendToMaster({
-        type: 'error',
+        type: WorkerMessageType.Error,
         jobId: job.id,
         payload: { error: message },
       });
@@ -202,13 +218,15 @@ export class WorkerProcessor implements OnModuleInit {
   private async processUrl(urlEntity: IJobUrl, jobId: number): Promise<void> {
     const workerId = cluster.worker?.id;
 
-    if (this.isCancelled(jobId) && urlEntity.status === 'pending') {
-      await this.applyUrlState(jobId, urlEntity, { status: 'cancelled' });
+    if (this.isCancelled(jobId) && urlEntity.status === UrlStatus.Pending) {
+      await this.applyUrlState(jobId, urlEntity, { status: UrlStatus.Cancelled });
       return;
     }
 
     try {
-      await this.applyUrlState(jobId, urlEntity, { status: 'in_progress' });
+      await this.applyUrlState(jobId, urlEntity, {
+        status: UrlStatus.InProgress,
+      });
 
       const response = await this.httpClient.head(urlEntity.url);
 
@@ -220,7 +238,7 @@ export class WorkerProcessor implements OnModuleInit {
 
       // URL was already started — finish even if job was cancelled mid-flight
       await this.applyUrlState(jobId, urlEntity, {
-        status: 'completed',
+        status: UrlStatus.Completed,
         httpStatus: response.status,
       });
 
@@ -230,7 +248,7 @@ export class WorkerProcessor implements OnModuleInit {
     } catch (error) {
       const message = toErrorMessage(error);
       await this.applyUrlState(jobId, urlEntity, {
-        status: 'failed',
+        status: UrlStatus.Failed,
         error: message,
       });
       this.logger.error(
@@ -246,7 +264,7 @@ export class WorkerProcessor implements OnModuleInit {
     jobId: number,
     urlEntity: IJobUrl,
     patch: {
-      status: UrlStatus;
+      status: UrlStatusType;
       httpStatus?: number;
       error?: string;
     },
@@ -260,13 +278,13 @@ export class WorkerProcessor implements OnModuleInit {
     if (patch.error !== undefined) {
       urlEntity.error = patch.error;
     }
-    if (patch.status === 'in_progress') {
+    if (patch.status === UrlStatus.InProgress) {
       urlEntity.startedAt = urlEntity.startedAt ?? now;
     }
     if (
-      patch.status === 'completed' ||
-      patch.status === 'failed' ||
-      patch.status === 'cancelled'
+      patch.status === UrlStatus.Completed ||
+      patch.status === UrlStatus.Failed ||
+      patch.status === UrlStatus.Cancelled
     ) {
       urlEntity.endedAt = now;
       if (!urlEntity.startedAt) {
@@ -286,7 +304,7 @@ export class WorkerProcessor implements OnModuleInit {
 
   private reportUrlProgress(jobId: number, urlEntity: IJobUrl): void {
     this.sendToMaster({
-      type: 'url_progress',
+      type: WorkerMessageType.UrlProgress,
       jobId,
       payload: {
         url: urlEntity.url,
@@ -297,9 +315,10 @@ export class WorkerProcessor implements OnModuleInit {
     });
   }
 
-  private resolveJobStatus(job: IJob): JobStatus {
+  private resolveJobStatus(job: IJob): JobStatusType {
     return resolveJobStatusFromUrls(job.urls, {
-      forceCancelled: this.isCancelled(job.id) || job.status === 'cancelled',
+      forceCancelled:
+        this.isCancelled(job.id) || job.status === JobStatus.Cancelled,
     });
   }
 

@@ -1,9 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { cancelPendingUrls } from '../../domain/job-rules';
-import type { JobStatus } from '../../domain/types/job-status.type';
+import { JobStatus, type JobStatus as JobStatusType } from '../../domain/types/job-status.type';
 import {
+  UrlStatus,
   isTerminalUrlStatus,
-  type UrlStatus,
+  type UrlStatus as UrlStatusType,
 } from '../../domain/types/url-status.type';
 import type { IJob } from '../../interfaces/job.interface';
 import type { IJobRepository } from '../../interfaces/job-repository.interface';
@@ -25,10 +26,10 @@ export class JobRepositoryService implements IJobRepository {
     return all.slice(offset, offset + limit);
   }
 
-  async updateStatus(id: number, status: JobStatus): Promise<void> {
+  async updateStatus(id: number, status: JobStatusType): Promise<void> {
     const job = this.requireJob(id);
     // Do not overwrite terminal cancelled state with later worker results
-    if (job.status === 'cancelled' && status !== 'cancelled') {
+    if (job.status === JobStatus.Cancelled && status !== JobStatus.Cancelled) {
       return;
     }
     job.status = status;
@@ -38,7 +39,7 @@ export class JobRepositoryService implements IJobRepository {
   async updateUrlStatus(
     jobId: number,
     url: string,
-    status: UrlStatus,
+    status: UrlStatusType,
     httpStatus?: number,
     error?: string,
   ): Promise<void> {
@@ -49,7 +50,10 @@ export class JobRepositoryService implements IJobRepository {
     }
 
     // pending must not revive a cancelled URL; completed/failed/in_progress may
-    if (urlEntity.status === 'cancelled' && status === 'pending') {
+    if (
+      urlEntity.status === UrlStatus.Cancelled &&
+      status === UrlStatus.Pending
+    ) {
       return;
     }
 
@@ -60,7 +64,7 @@ export class JobRepositoryService implements IJobRepository {
     if (error !== undefined) {
       urlEntity.error = error;
     }
-    if (status === 'in_progress' && !urlEntity.startedAt) {
+    if (status === UrlStatus.InProgress && !urlEntity.startedAt) {
       urlEntity.startedAt = new Date();
     }
     if (isTerminalUrlStatus(status)) {
@@ -75,7 +79,7 @@ export class JobRepositoryService implements IJobRepository {
       return null;
     }
 
-    job.status = 'cancelled';
+    job.status = JobStatus.Cancelled;
     job.updatedAt = new Date();
     cancelPendingUrls(job);
     return job;

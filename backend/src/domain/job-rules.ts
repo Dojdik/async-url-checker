@@ -1,17 +1,17 @@
 import type { IJob } from '../interfaces/job.interface';
 import type { IJobUrl } from '../interfaces/job-url.interface';
-import type { JobStatus } from './types/job-status.type';
-import type { UrlStatus } from './types/url-status.type';
+import { JobStatus, type JobStatus as JobStatusType } from './types/job-status.type';
+import { UrlStatus, type UrlStatus as UrlStatusType } from './types/url-status.type';
 
-export type UrlStatusCounts = Record<UrlStatus, number>;
+export type UrlStatusCounts = Record<UrlStatusType, number>;
 
 export function emptyUrlStatusCounts(): UrlStatusCounts {
   return {
-    pending: 0,
-    in_progress: 0,
-    completed: 0,
-    cancelled: 0,
-    failed: 0,
+    [UrlStatus.Pending]: 0,
+    [UrlStatus.InProgress]: 0,
+    [UrlStatus.Completed]: 0,
+    [UrlStatus.Cancelled]: 0,
+    [UrlStatus.Failed]: 0,
   };
 }
 
@@ -30,8 +30,8 @@ export function countUrlStatuses(urls: IJobUrl[]): UrlStatusCounts {
  */
 export function cancelPendingUrls(job: IJob, now: Date = new Date()): void {
   for (const url of job.urls) {
-    if (url.status === 'pending') {
-      url.status = 'cancelled';
+    if (url.status === UrlStatus.Pending) {
+      url.status = UrlStatus.Cancelled;
       url.endedAt = now;
     }
   }
@@ -44,21 +44,25 @@ export function cancelPendingUrls(job: IJob, now: Date = new Date()): void {
 export function resolveJobStatusFromUrls(
   urls: IJobUrl[],
   options?: { forceCancelled?: boolean },
-): JobStatus {
+): JobStatusType {
   if (options?.forceCancelled) {
-    return 'cancelled';
+    return JobStatus.Cancelled;
   }
 
   const counts = countUrlStatuses(urls);
   const total = urls.length;
 
-  if (counts.cancelled > 0 && counts.pending === 0 && counts.in_progress === 0) {
-    return 'cancelled';
+  if (
+    counts[UrlStatus.Cancelled] > 0 &&
+    counts[UrlStatus.Pending] === 0 &&
+    counts[UrlStatus.InProgress] === 0
+  ) {
+    return JobStatus.Cancelled;
   }
 
-  if (total > 0 && counts.failed === total) {
-    return 'failed';
+  if (total > 0 && counts[UrlStatus.Failed] === total) {
+    return JobStatus.Failed;
   }
 
-  return 'completed';
+  return JobStatus.Completed;
 }
