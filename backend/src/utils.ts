@@ -1,4 +1,4 @@
-const RANDOM_RANGE = 10
+const RANDOM_DELAY_MAX = 10
 
 export function dtoQueryNumber({ value }) {
     if (value === undefined || value === null) return 0;
@@ -6,6 +6,6 @@ export function dtoQueryNumber({ value }) {
     return isNaN(parsed) ? 0 : parsed;
 }
 
-export function randomInt() {
-    return Math.floor(Math.random() * RANDOM_RANGE)
+export function randomDelay(): number {
+    return Math.floor(Math.random() * RANDOM_DELAY_MAX) * 1000
 }

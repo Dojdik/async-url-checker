@@ -1,18 +1,15 @@
 import { Module } from '@nestjs/common';
-import { JobsModule } from './jobs/jobs.module';
-import { JobsController } from './jobs/jobs.controller';
-import { LoggingInterceptor } from './interceptors/LoggingInterceptor';
-import { APP_INTERCEPTOR } from '@nestjs/core';
-import { ScheduleModule } from '@nestjs/schedule';
+import { MasterModule } from './master/master.module';
+import { WorkerModule } from './worker/worker.module';
+import { ClusterModule } from './cluster/cluster.module';
 
 @Module({
-  imports: [ScheduleModule.forRoot(), JobsModule],
-  controllers: [],
-  providers: [
-    {
-      provide: APP_INTERCEPTOR,
-      useClass: LoggingInterceptor,
-    },
+  imports: [
+    ClusterModule.forRoot({
+      workers: 5,
+      module: MasterModule,
+      workerModule: WorkerModule,
+    }),
   ],
 })
-export class AppModule { }
+export class AppModule {}

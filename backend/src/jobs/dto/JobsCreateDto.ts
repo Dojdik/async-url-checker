@@ -3,7 +3,7 @@ import { IsArray, IsUrl } from 'class-validator';
 
 export class JobsCreateDto {
     @ApiProperty()
-    @IsUrl()
+    @IsUrl({}, { each: true })
     @IsArray()
     urls!: string[];
 }
