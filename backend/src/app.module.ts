@@ -6,7 +6,7 @@ import { ClusterModule } from './cluster/cluster.module';
 @Module({
   imports: [
     ClusterModule.forRoot({
-      workers: 5,
+      workers: Number(process.env.WORKERS_COUNT) || 2,
       module: MasterModule,
       workerModule: WorkerModule,
     }),

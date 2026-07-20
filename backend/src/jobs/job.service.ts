@@ -1,41 +1,57 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { Job } from '../common/Job';
+import {
+  Inject,
+  Injectable,
+  NotFoundException,
+  forwardRef,
+} from '@nestjs/common';
+import type { IJob } from '../interfaces/job.interface';
+import type { IJobFactory } from '../interfaces/job-factory.interface';
+import type { IJobRepository } from '../interfaces/job-repository.interface';
+import { JOB_FACTORY, JOB_REPOSITORY } from '../common/tokens';
+import { JobDispatcherService } from '../master/job-dispatcher.service';
 
 @Injectable()
 export class JobService {
-    private jobsList: Job[] = []
-    private jobsMap: Map<number, Job> = new Map()
+  constructor(
+    @Inject(JOB_REPOSITORY) private readonly repository: IJobRepository,
+    @Inject(JOB_FACTORY) private readonly factory: IJobFactory,
+    @Inject(forwardRef(() => JobDispatcherService))
+    private readonly dispatcher: JobDispatcherService,
+  ) {}
 
-    async create(urls: string[]) {
-        const job = new Job(urls)
-        this.jobsMap[job.id] = job
-        this.jobsList.push(job)
-        job.start()
+  async create(urls: string[]): Promise<Pick<IJob, 'id' | 'status' | 'createdAt'>> {
+    const job = this.factory.create(urls);
+    await this.repository.save(job);
+    await this.dispatcher.dispatchJob(job);
+
+    return {
+      id: job.id,
+      status: job.status,
+      createdAt: job.createdAt,
+    };
+  }
+
+  async findAll(offset: number, count: number) {
+    const jobs = await this.repository.findAll(offset, count);
+    return jobs.map((job) => ({
+      id: job.id,
+      createdAt: job.createdAt,
+      status: job.status,
+    }));
+  }
+
+  async find(id: number): Promise<IJob> {
+    const job = await this.repository.findById(id);
+    if (!job) {
+      throw new NotFoundException('Job not found');
     }
+    return job;
+  }
 
-    async findAll(offset: number, count: number) {
-
-        console.log(this.jobsList)
-
-        return this.jobsList.slice(offset, count).map(x => ({
-            id: x.id,
-            createdAt: x.createdAt,
-            status: x.status
-        }))
+  async delete(id: number): Promise<void> {
+    const deleted = await this.repository.delete(id);
+    if (!deleted) {
+      throw new NotFoundException('Job not found');
     }
-
-    async find(id: number): Promise<Job> {
-        if (this.jobsMap[id])
-            return this.jobsMap[id]
-
-        throw new NotFoundException("Job not found")
-    }
-
-    async delete(id: number) {
-        const deleted = this.jobsList.splice(id-1, 1)
-
-        if (deleted.length == 0) {
-            throw new NotFoundException("Job not found")
-        }
-    }
+  }
 }

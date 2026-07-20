@@ -1,77 +1,106 @@
-import cluster from 'cluster';
-import { Injectable, OnModuleInit, OnModuleDestroy, Inject } from '@nestjs/common';
+import cluster, { type Worker } from 'node:cluster';
+import path from 'node:path';
+import {
+  Injectable,
+  OnModuleDestroy,
+  Inject,
+  Logger,
+} from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { IMasterMessage, IWorkerMessage } from '@/interfaces/message.interface';
-import { IJob } from '@/interfaces/job.interface';
+import type { IMasterMessage } from '../interfaces/master-message.interface';
+import type { IWorkerMessage } from '../interfaces/worker-message.interface';
+import type { IJob } from '../interfaces/job.interface';
+import { MAX_WORKERS } from '../common/tokens';
 
 @Injectable()
-export class WorkerPoolService implements OnModuleInit, OnModuleDestroy {
-  private workers: cluster.Worker[] = [];
-  private availableWorkers: Set<cluster.Worker> = new Set();
-  private readonly MAX_WORKERS: number;
+export class WorkerPoolService implements OnModuleDestroy {
+  private readonly logger = new Logger(WorkerPoolService.name);
+  private workers: Worker[] = [];
+  private readonly availableWorkers = new Set<Worker>();
+  private readonly maxWorkers: number;
   private isShuttingDown = false;
+  private started = false;
 
   constructor(
     private readonly eventEmitter: EventEmitter2,
-    @Inject('MAX_WORKERS') maxWorkers: number = 5,
+    @Inject(MAX_WORKERS) maxWorkers: number,
   ) {
-    this.MAX_WORKERS = maxWorkers;
+    this.maxWorkers = maxWorkers;
   }
 
-  onModuleInit() {
-    this.createWorkers();
+  /**
+   * Start workers only after the HTTP server is listening,
+   * so a bind failure does not leave orphan cluster processes.
+   */
+  start(): void {
+    if (this.started || !cluster.isPrimary) {
+      return;
+    }
+    this.started = true;
+    this.configureClusterExec();
     this.setupClusterEvents();
+    this.createWorkers();
   }
 
-  onModuleDestroy() {
+  /**
+   * Ensure cluster.fork() has a valid entry script (fails when argv[1] is unset).
+   */
+  private configureClusterExec(): void {
+    const execArgv = process.execArgv.filter(
+      (arg) => !arg.startsWith('--inspect'),
+    );
+    const exec =
+      process.argv[1] ?? path.join(__dirname, '..', 'main.js');
+
+    cluster.setupPrimary({
+      exec,
+      execArgv,
+    });
+  }
+
+  onModuleDestroy(): void {
     this.isShuttingDown = true;
     this.disconnectWorkers();
   }
 
-  private createWorkers() {
-    for (let i = 0; i < this.MAX_WORKERS; i++) {
-      const worker = cluster.fork();
-      this.workers.push(worker);
-      this.availableWorkers.add(worker);
-      
-      // Ждем готовности воркера
-      worker.once('message', (msg: IWorkerMessage) => {
-        if (msg.type === 'ready') {
-          console.log(`Worker ${worker.id} is ready`);
-          this.eventEmitter.emit('worker.ready', { workerId: worker.id });
-        }
-      });
+  private createWorkers(): void {
+    for (let i = 0; i < this.maxWorkers; i++) {
+      this.spawnWorker();
     }
   }
 
-  private setupClusterEvents() {
-    // Воркер завершил задачу
-    this.eventEmitter.on('worker.complete', (data: any) => {
-      const { workerId, jobId, result } = data;
-      const worker = this.workers.find(w => w.id === workerId);
-      if (worker) {
+  private spawnWorker(): Worker {
+    const worker = cluster.fork();
+    this.workers.push(worker);
+
+    worker.on('error', (err) => {
+      this.logger.warn(`Worker error: ${err.message}`);
+    });
+
+    worker.once('message', (msg: IWorkerMessage) => {
+      if (msg.type === 'ready') {
+        this.logger.log(`Worker ${worker.id} is ready`);
         this.availableWorkers.add(worker);
-        this.eventEmitter.emit('job.complete', { jobId, result });
+        this.eventEmitter.emit('worker.ready', { workerId: worker.id });
       }
     });
 
-    // Воркер упал - создаем новый
-    cluster.on('exit', (worker) => {
-      if (!this.isShuttingDown) {
-        console.log(`Worker ${worker.id} died. Creating new one...`);
-        const newWorker = cluster.fork();
-        this.workers = this.workers.map(w => 
-          w.id === worker.id ? newWorker : w
-        );
-        this.availableWorkers.delete(worker);
-        
-        // Ждем готовности нового воркера
-        newWorker.once('message', (msg: IWorkerMessage) => {
-          if (msg.type === 'ready') {
-            this.availableWorkers.add(newWorker);
-          }
-        });
+    return worker;
+  }
+
+  private setupClusterEvents(): void {
+    cluster.on('exit', (worker, code, signal) => {
+      this.workers = this.workers.filter((w) => w.id !== worker.id);
+      this.availableWorkers.delete(worker);
+
+      if (this.isShuttingDown) {
+        return;
       }
+
+      this.logger.warn(
+        `Worker ${worker.id} died (code=${code}, signal=${signal}). Creating a new one...`,
+      );
+      this.spawnWorker();
     });
   }
 
@@ -80,54 +109,72 @@ export class WorkerPoolService implements OnModuleInit, OnModuleDestroy {
       throw new Error('No workers available');
     }
 
-    // Берем первого доступного воркера
-    const worker = this.availableWorkers.values().next().value;
+    const worker = this.availableWorkers.values().next().value as Worker;
     this.availableWorkers.delete(worker);
 
-    // Отправляем задачу воркеру
     const message: IMasterMessage = {
       type: 'process_job',
       job,
     };
+
+    if (!worker.isConnected()) {
+      throw new Error(`Worker ${worker.id} is not connected`);
+    }
+
     worker.send(message);
 
-    // Устанавливаем таймаут на выполнение
     const timeout = setTimeout(() => {
-      console.log(`Worker ${worker.id} timed out on job ${job.id}`);
+      this.logger.warn(`Worker ${worker.id} timed out on job ${job.id}`);
       this.availableWorkers.add(worker);
       this.eventEmitter.emit('job.timeout', { jobId: job.id });
-    }, 30000); // 30 секунд
+      worker.off('message', onMessage);
+    }, 30_000);
 
-    // Возвращаем воркер в пул после выполнения
     const onMessage = (msg: IWorkerMessage) => {
-      if (msg.jobId === job.id && (msg.type === 'complete' || msg.type === 'error')) {
-        clearTimeout(timeout);
-        this.availableWorkers.add(worker);
-        worker.off('message', onMessage);
-        
-        if (msg.type === 'complete') {
-          this.eventEmitter.emit('worker.complete', {
-            workerId: worker.id,
-            jobId: job.id,
-            result: msg.payload,
-          });
-        } else {
-          this.eventEmitter.emit('worker.error', {
-            workerId: worker.id,
-            jobId: job.id,
-            error: msg.payload,
-          });
-        }
+      if (msg.jobId !== job.id) {
+        return;
+      }
+      if (msg.type !== 'complete' && msg.type !== 'error') {
+        return;
+      }
+
+      clearTimeout(timeout);
+      this.availableWorkers.add(worker);
+      worker.off('message', onMessage);
+
+      if (msg.type === 'complete') {
+        this.eventEmitter.emit('worker.complete', {
+          workerId: worker.id,
+          jobId: job.id,
+          result: msg.payload,
+        });
+        this.eventEmitter.emit('job.complete', {
+          jobId: job.id,
+          result: msg.payload,
+        });
+      } else {
+        this.eventEmitter.emit('worker.error', {
+          workerId: worker.id,
+          jobId: job.id,
+          error: msg.payload,
+        });
       }
     };
 
     worker.on('message', onMessage);
   }
 
-  private disconnectWorkers() {
+  private disconnectWorkers(): void {
     for (const worker of this.workers) {
-      worker.disconnect();
+      try {
+        worker.process.removeAllListeners('error');
+        worker.kill('SIGTERM');
+      } catch {
+        // ignore
+      }
     }
+    this.workers = [];
+    this.availableWorkers.clear();
   }
 
   getAvailableWorkersCount(): number {

@@ -1,36 +1,33 @@
-import { DynamicModule } from '@nestjs/common';
-import cluster from 'cluster';
+import { DynamicModule, Type } from '@nestjs/common';
+import cluster from 'node:cluster';
+import { IS_MASTER, IS_WORKER, WORKER_ID } from '../common/tokens';
 
+export interface ClusterModuleOptions {
+  workers: number;
+  module: Type<unknown>;
+  workerModule: Type<unknown>;
+}
+
+/**
+ * Loads Master or Worker Nest module depending on the process role.
+ */
 export class ClusterModule {
-  static forRoot(options: {
-    workers: number;
-    module: any;
-    workerModule: any;
-  }): DynamicModule {
+  static forRoot(options: ClusterModuleOptions): DynamicModule {
     const isMaster = cluster.isPrimary;
     const isWorker = cluster.isWorker;
 
     return {
       module: ClusterModule,
-      imports: [
-        // Импортируем нужный модуль в зависимости от типа процесса
-        isMaster ? options.module : options.workerModule,
-      ],
+      imports: [isMaster ? options.module : options.workerModule],
       providers: [
+        { provide: IS_MASTER, useValue: isMaster },
+        { provide: IS_WORKER, useValue: isWorker },
         {
-          provide: 'IS_MASTER',
-          useValue: isMaster,
-        },
-        {
-          provide: 'IS_WORKER',
-          useValue: isWorker,
-        },
-        {
-          provide: 'WORKER_ID',
-          useValue: isWorker ? cluster.worker?.id : null,
+          provide: WORKER_ID,
+          useValue: isWorker ? cluster.worker?.id ?? null : null,
         },
       ],
-      exports: ['IS_MASTER', 'IS_WORKER', 'WORKER_ID'],
+      exports: [IS_MASTER, IS_WORKER, WORKER_ID],
     };
   }
 }

@@ -1,6 +1,8 @@
-import { JobUrlEntity } from "./job-url.entity";
+import type { JobStatus } from '../types/job-status.type';
+import type { IJob } from '../../interfaces/job.interface';
+import type { JobUrlEntity } from './job-url.entity';
 
-export class JobEntity {
+export class JobEntity implements IJob {
   constructor(
     public readonly id: number,
     public urls: JobUrlEntity[],
@@ -9,5 +11,3 @@ export class JobEntity {
     public updatedAt: Date = new Date(),
   ) {}
 }
-
-export type JobStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled' | 'failed';

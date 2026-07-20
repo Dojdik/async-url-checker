@@ -1,11 +1,14 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable } from '@nestjs/common';
+import type { IHttpClient } from '../../interfaces/http-client.interface';
 
 @Injectable()
 export class HttpClientService implements IHttpClient {
+  private readonly timeoutMs = 10_000;
+
   async head(url: string): Promise<{ status: number }> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+
     try {
       const response = await fetch(url, {
         method: 'HEAD',

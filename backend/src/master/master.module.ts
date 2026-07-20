@@ -1,27 +1,25 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+import { JobsModule } from '../jobs/job.module';
+import { InfrastructureModule } from '../infrastructure/infrastructure.module';
 import { WorkerPoolService } from './worker-pool.service';
 import { JobDispatcherService } from './job-dispatcher.service';
-import { JobService } from '@/jobs/job.service';
-import { JobRepositoryService } from '@/shared/job-repository.service';
-import { JobQueueService } from '@/shared/job-queue.service';
+import { MAX_WORKERS } from '../common/tokens';
 
 @Module({
+  imports: [
+    EventEmitterModule.forRoot(),
+    InfrastructureModule,
+    forwardRef(() => JobsModule),
+  ],
   providers: [
     WorkerPoolService,
     JobDispatcherService,
-    JobService,
     {
-      provide: 'IJobRepository',
-      useClass: JobRepositoryService,
-    },
-    {
-      provide: 'IJobQueue',
-      useClass: JobQueueService,
-    },
-    {
-      provide: 'MAX_WORKERS',
-      useValue: Number(process.env.WORKERS_COUNT) || 5,
+      provide: MAX_WORKERS,
+      useValue: Number(process.env.WORKERS_COUNT) || 2,
     },
   ],
+  exports: [JobDispatcherService, WorkerPoolService, InfrastructureModule],
 })
 export class MasterModule {}
