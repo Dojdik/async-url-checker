@@ -1,7 +1,13 @@
 import type { UrlStatus } from '../domain/types/url-status.type';
+import {
+  WorkerMessageType,
+  type WorkerMessageType as WorkerMessageTypeValue,
+} from './ipc-message.types';
+
+export { WorkerMessageType };
 
 export interface IWorkerMessage {
-  type: 'ready' | 'complete' | 'error' | 'cancelled' | 'url_progress' | 'job_done';
+  type: WorkerMessageTypeValue;
   payload?: unknown;
   jobId?: number;
 }

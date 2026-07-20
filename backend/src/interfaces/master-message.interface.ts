@@ -1,12 +1,15 @@
 import type { JobIpcDto } from '../common/job-ipc';
+import { MasterMessageType } from './ipc-message.types';
 
 /** Master → worker over cluster IPC (JSON-safe job DTO). */
 export type IMasterMessage =
   | {
-      type: 'process_job';
+      type: typeof MasterMessageType.ProcessJob;
       job: JobIpcDto;
     }
   | {
-      type: 'cancel_job';
+      type: typeof MasterMessageType.CancelJob;
       jobId: number;
     };
+
+export { MasterMessageType };

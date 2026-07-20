@@ -6,11 +6,23 @@ import {
   Inject,
   Logger,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import type { IMasterMessage } from '../interfaces/master-message.interface';
-import type { IWorkerMessage } from '../interfaces/worker-message.interface';
+import {
+  MasterMessageType,
+  type IMasterMessage,
+} from '../interfaces/master-message.interface';
+import {
+  WorkerMessageType,
+  type IWorkerMessage,
+} from '../interfaces/worker-message.interface';
 import type { IJob } from '../interfaces/job.interface';
 import { serializeJobForIpc } from '../common/job-ipc';
+import { AppEvents } from '../common/app-events';
+import {
+  computeJobTimeoutMs,
+  type AppConfiguration,
+} from '../config/configuration';
 import { MAX_WORKERS } from '../common/tokens';
 
 interface JobAssignment {
@@ -33,14 +45,19 @@ export class WorkerPoolService implements OnModuleDestroy {
   private readonly readyWorkers = new Set<number>();
   private readonly jobAssignments = new Map<number, JobAssignment>();
   private readonly maxWorkers: number;
+  private readonly jobTimeoutBaseMs: number;
+  private readonly jobTimeoutPerUrlMs: number;
   private isShuttingDown = false;
   private started = false;
 
   constructor(
     private readonly eventEmitter: EventEmitter2,
     @Inject(MAX_WORKERS) maxWorkers: number,
+    config: ConfigService<AppConfiguration, true>,
   ) {
     this.maxWorkers = maxWorkers;
+    this.jobTimeoutBaseMs = config.get('jobTimeoutBaseMs', { infer: true });
+    this.jobTimeoutPerUrlMs = config.get('jobTimeoutPerUrlMs', { infer: true });
   }
 
   /**
@@ -91,7 +108,7 @@ export class WorkerPoolService implements OnModuleDestroy {
 
     // Keep listening until ready (not only the first message)
     const onReady = (msg: IWorkerMessage) => {
-      if (msg?.type !== 'ready') {
+      if (msg?.type !== WorkerMessageType.Ready) {
         return;
       }
       worker.off('message', onReady);
@@ -112,7 +129,7 @@ export class WorkerPoolService implements OnModuleDestroy {
     this.readyWorkers.add(worker.id);
     this.availableWorkers.add(worker);
     this.logger.log(`Worker ${worker.id} is ready`);
-    this.eventEmitter.emit('worker.ready', { workerId: worker.id });
+    this.eventEmitter.emit(AppEvents.WorkerReady, { workerId: worker.id });
   }
 
   private setupClusterEvents(): void {
@@ -127,7 +144,7 @@ export class WorkerPoolService implements OnModuleDestroy {
         this.logger.error(
           `Worker ${worker.id} died mid-job ${jobId} (code=${code}, signal=${signal})`,
         );
-        this.eventEmitter.emit('worker.error', {
+        this.eventEmitter.emit(AppEvents.WorkerError, {
           workerId: worker.id,
           jobId,
           error: { error: 'Worker process died' },
@@ -175,11 +192,15 @@ export class WorkerPoolService implements OnModuleDestroy {
     }
 
     const message: IMasterMessage = {
-      type: 'process_job',
+      type: MasterMessageType.ProcessJob,
       job: serializeJobForIpc(job),
     };
 
-    const timeoutMs = Math.max(60_000, job.urls.length * 12_000);
+    const timeoutMs = computeJobTimeoutMs(
+      job.urls.length,
+      this.jobTimeoutBaseMs,
+      this.jobTimeoutPerUrlMs,
+    );
 
     const onMessage = (msg: IWorkerMessage) => {
       // Ignore late messages after assignment was released
@@ -191,8 +212,8 @@ export class WorkerPoolService implements OnModuleDestroy {
         return;
       }
 
-      if (msg.type === 'url_progress') {
-        this.eventEmitter.emit('job.url_progress', {
+      if (msg.type === WorkerMessageType.UrlProgress) {
+        this.eventEmitter.emit(AppEvents.JobUrlProgress, {
           jobId: job.id,
           progress: msg.payload,
         });
@@ -200,9 +221,9 @@ export class WorkerPoolService implements OnModuleDestroy {
       }
 
       if (
-        msg.type !== 'complete' &&
-        msg.type !== 'error' &&
-        msg.type !== 'cancelled'
+        msg.type !== WorkerMessageType.Complete &&
+        msg.type !== WorkerMessageType.Error &&
+        msg.type !== WorkerMessageType.Cancelled
       ) {
         return;
       }
@@ -210,13 +231,16 @@ export class WorkerPoolService implements OnModuleDestroy {
       this.finishAssignment(job.id, worker, onMessage, timeout, {
         returnToPool: true,
         after: () => {
-          if (msg.type === 'complete' || msg.type === 'cancelled') {
-            this.eventEmitter.emit('job.complete', {
+          if (
+            msg.type === WorkerMessageType.Complete ||
+            msg.type === WorkerMessageType.Cancelled
+          ) {
+            this.eventEmitter.emit(AppEvents.JobComplete, {
               jobId: job.id,
               result: msg.payload,
             });
           } else {
-            this.eventEmitter.emit('worker.error', {
+            this.eventEmitter.emit(AppEvents.WorkerError, {
               workerId: worker.id,
               jobId: job.id,
               error: msg.payload,
@@ -240,7 +264,7 @@ export class WorkerPoolService implements OnModuleDestroy {
       this.finishAssignment(job.id, worker, onMessage, timeout, {
         returnToPool: false,
         after: () => {
-          this.eventEmitter.emit('job.timeout', { jobId: job.id });
+          this.eventEmitter.emit(AppEvents.JobTimeout, { jobId: job.id });
         },
       });
       this.retireWorker(worker, 'timeout');
@@ -280,7 +304,7 @@ export class WorkerPoolService implements OnModuleDestroy {
       !this.isWorkerBusy(worker)
     ) {
       this.availableWorkers.add(worker);
-      this.eventEmitter.emit('worker.ready', { workerId: worker.id });
+      this.eventEmitter.emit(AppEvents.WorkerReady, { workerId: worker.id });
     }
   }
 
@@ -318,7 +342,7 @@ export class WorkerPoolService implements OnModuleDestroy {
     }
 
     const message: IMasterMessage = {
-      type: 'cancel_job',
+      type: MasterMessageType.CancelJob,
       jobId,
     };
     assignment.worker.send(message);
