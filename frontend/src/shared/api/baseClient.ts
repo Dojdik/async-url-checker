@@ -3,6 +3,8 @@
  * Features/entities depend on this abstraction, not on fetch details (DIP).
  */
 
+import { API_BASE_DEFAULT } from '@/shared/api/routes';
+
 export class ApiError extends Error {
   readonly status: number;
   readonly body?: unknown;
@@ -15,7 +17,7 @@ export class ApiError extends Error {
   }
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api';
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? API_BASE_DEFAULT;
 
 export async function apiRequest<T>(
   path: string,
