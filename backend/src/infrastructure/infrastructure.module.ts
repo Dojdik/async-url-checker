@@ -14,7 +14,7 @@ import { ConsoleLoggerService } from './logging/console-logger.service';
 
 /**
  * Infrastructure adapters bound to application ports (DIP).
- * Import where concrete implementations are needed.
+ * Export only token bindings — inject via JOB_REPOSITORY / HTTP_CLIENT / …
  */
 @Module({
   providers: [
@@ -23,23 +23,7 @@ import { ConsoleLoggerService } from './logging/console-logger.service';
     { provide: HTTP_CLIENT, useClass: HttpClientService },
     { provide: LOGGER, useClass: ConsoleLoggerService },
     { provide: JOB_FACTORY, useClass: JobFactory },
-    JobFactory,
-    JobRepositoryService,
-    JobQueueService,
-    HttpClientService,
-    ConsoleLoggerService,
   ],
-  exports: [
-    JOB_REPOSITORY,
-    JOB_QUEUE,
-    HTTP_CLIENT,
-    LOGGER,
-    JOB_FACTORY,
-    JobFactory,
-    JobRepositoryService,
-    JobQueueService,
-    HttpClientService,
-    ConsoleLoggerService,
-  ],
+  exports: [JOB_REPOSITORY, JOB_QUEUE, HTTP_CLIENT, LOGGER, JOB_FACTORY],
 })
 export class InfrastructureModule {}

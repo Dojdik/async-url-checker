@@ -14,3 +14,5 @@ export function randomDelay(maxSeconds = 10): number {
   const seconds = Math.floor(Math.random() * (maxSeconds + 1));
   return seconds * 1000;
 }
+
+export { toErrorMessage } from './common/errors';

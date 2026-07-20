@@ -9,8 +9,15 @@ import type { IJobUrl } from '../interfaces/job-url.interface';
 import type { IMasterMessage } from '../interfaces/master-message.interface';
 import type { IWorkerMessage } from '../interfaces/worker-message.interface';
 import type { JobStatus } from '../domain/types/job-status.type';
+import type { UrlStatus } from '../domain/types/url-status.type';
+import {
+  cancelPendingUrls,
+  countUrlStatuses,
+  resolveJobStatusFromUrls,
+} from '../domain/job-rules';
 import type { AppConfiguration } from '../config/configuration';
 import { HTTP_CLIENT, JOB_REPOSITORY } from '../common/tokens';
+import { toErrorMessage } from '../common/errors';
 import { randomDelay } from '../utils';
 
 /**
@@ -72,14 +79,8 @@ export class WorkerProcessor implements OnModuleInit {
 
       await this.processUrlsWithConcurrency(job);
 
-      // Stop not-started URLs when cancelled
       if (this.isCancelled(job.id)) {
-        for (const url of job.urls) {
-          if (url.status === 'pending') {
-            url.status = 'cancelled';
-            url.endedAt = new Date();
-          }
-        }
+        cancelPendingUrls(job);
         await this.repository.cancel(job.id);
       }
 
@@ -88,14 +89,15 @@ export class WorkerProcessor implements OnModuleInit {
         await this.repository.updateStatus(job.id, status);
       }
 
+      const counts = countUrlStatuses(job.urls);
       this.sendToMaster({
         type: status === 'cancelled' ? 'cancelled' : 'complete',
         jobId: job.id,
         payload: {
           status,
           totalUrls: job.urls.length,
-          failedUrls: job.urls.filter((u) => u.status === 'failed').length,
-          cancelledUrls: job.urls.filter((u) => u.status === 'cancelled').length,
+          failedUrls: counts.failed,
+          cancelledUrls: counts.cancelled,
           results: job.urls.map((u) => ({
             url: u.url,
             status: u.status,
@@ -105,7 +107,7 @@ export class WorkerProcessor implements OnModuleInit {
         },
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = toErrorMessage(error);
       try {
         if (!this.isCancelled(job.id)) {
           await this.repository.updateStatus(job.id, 'failed');
@@ -124,7 +126,7 @@ export class WorkerProcessor implements OnModuleInit {
   }
 
   /**
-   * Process URLs with a pool of max 5 concurrent tasks.
+   * Process URLs with a limited concurrency pool.
    * New URLs are not started after cancel.
    */
   private async processUrlsWithConcurrency(job: IJob): Promise<void> {
@@ -158,7 +160,6 @@ export class WorkerProcessor implements OnModuleInit {
               if (active === 0) {
                 resolve();
               } else if (this.isCancelled(job.id)) {
-                // wait for in-flight URLs to finish
                 return;
               }
             } else {
@@ -180,21 +181,15 @@ export class WorkerProcessor implements OnModuleInit {
     const workerId = cluster.worker?.id;
 
     if (this.isCancelled(jobId) && urlEntity.status === 'pending') {
-      urlEntity.status = 'cancelled';
-      urlEntity.endedAt = new Date();
-      this.reportUrlProgress(jobId, urlEntity);
+      await this.applyUrlState(jobId, urlEntity, { status: 'cancelled' });
       return;
     }
 
     try {
-      urlEntity.status = 'in_progress';
-      urlEntity.startedAt = new Date();
-      await this.repository.updateUrlStatus(jobId, urlEntity.url, 'in_progress');
-      this.reportUrlProgress(jobId, urlEntity);
+      await this.applyUrlState(jobId, urlEntity, { status: 'in_progress' });
 
       const response = await this.httpClient.head(urlEntity.url);
 
-      // Artificial delay 0..URL_DELAY_MAX_SECONDS before persisting the result
       const waitMs = randomDelay(this.urlDelayMaxSeconds);
       this.logger.debug(
         `Worker ${workerId}: delaying ${waitMs}ms for ${urlEntity.url}`,
@@ -202,43 +197,69 @@ export class WorkerProcessor implements OnModuleInit {
       await delay(waitMs);
 
       // URL was already started — finish even if job was cancelled mid-flight
-      urlEntity.status = 'completed';
-      urlEntity.httpStatus = response.status;
-      urlEntity.endedAt = new Date();
-
-      await this.repository.updateUrlStatus(
-        jobId,
-        urlEntity.url,
-        'completed',
-        response.status,
-      );
-      this.reportUrlProgress(jobId, urlEntity);
+      await this.applyUrlState(jobId, urlEntity, {
+        status: 'completed',
+        httpStatus: response.status,
+      });
 
       this.logger.log(
         `Worker ${workerId}: ${urlEntity.url} -> ${response.status}`,
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      urlEntity.status = 'failed';
-      urlEntity.error = message;
-      urlEntity.endedAt = new Date();
-      if (!urlEntity.startedAt) {
-        urlEntity.startedAt = urlEntity.endedAt;
-      }
-
-      await this.repository.updateUrlStatus(
-        jobId,
-        urlEntity.url,
-        'failed',
-        undefined,
-        message,
-      );
-      this.reportUrlProgress(jobId, urlEntity);
-
+      const message = toErrorMessage(error);
+      await this.applyUrlState(jobId, urlEntity, {
+        status: 'failed',
+        error: message,
+      });
       this.logger.error(
         `Worker ${workerId}: ${urlEntity.url} failed: ${message}`,
       );
     }
+  }
+
+  /**
+   * Single place for URL state: mutate entity, persist, notify master.
+   */
+  private async applyUrlState(
+    jobId: number,
+    urlEntity: IJobUrl,
+    patch: {
+      status: UrlStatus;
+      httpStatus?: number;
+      error?: string;
+    },
+  ): Promise<void> {
+    const now = new Date();
+
+    urlEntity.status = patch.status;
+    if (patch.httpStatus !== undefined) {
+      urlEntity.httpStatus = patch.httpStatus;
+    }
+    if (patch.error !== undefined) {
+      urlEntity.error = patch.error;
+    }
+    if (patch.status === 'in_progress') {
+      urlEntity.startedAt = urlEntity.startedAt ?? now;
+    }
+    if (
+      patch.status === 'completed' ||
+      patch.status === 'failed' ||
+      patch.status === 'cancelled'
+    ) {
+      urlEntity.endedAt = now;
+      if (!urlEntity.startedAt) {
+        urlEntity.startedAt = now;
+      }
+    }
+
+    await this.repository.updateUrlStatus(
+      jobId,
+      urlEntity.url,
+      patch.status,
+      patch.httpStatus,
+      patch.error,
+    );
+    this.reportUrlProgress(jobId, urlEntity);
   }
 
   private reportUrlProgress(jobId: number, urlEntity: IJobUrl): void {
@@ -255,25 +276,9 @@ export class WorkerProcessor implements OnModuleInit {
   }
 
   private resolveJobStatus(job: IJob): JobStatus {
-    if (this.isCancelled(job.id) || job.status === 'cancelled') {
-      return 'cancelled';
-    }
-
-    const failed = job.urls.filter((u) => u.status === 'failed').length;
-    const cancelled = job.urls.filter((u) => u.status === 'cancelled').length;
-    const completed = job.urls.filter((u) => u.status === 'completed').length;
-
-    if (cancelled > 0 && completed + failed + cancelled === job.urls.length) {
-      // Mixed with cancel → overall cancelled if any were cancelled mid-run
-      // Spec: job marked cancelled on DELETE
-      return 'cancelled';
-    }
-
-    if (failed === job.urls.length) {
-      return 'failed';
-    }
-
-    return 'completed';
+    return resolveJobStatusFromUrls(job.urls, {
+      forceCancelled: this.isCancelled(job.id) || job.status === 'cancelled',
+    });
   }
 
   private sendToMaster(message: IWorkerMessage): void {
@@ -285,7 +290,9 @@ export class WorkerProcessor implements OnModuleInit {
     } catch (error) {
       const err = error as NodeJS.ErrnoException;
       if (err.code !== 'EPIPE') {
-        this.logger.warn(`Failed to send message to master: ${err.message}`);
+        this.logger.warn(
+          `Failed to send message to master: ${toErrorMessage(error)}`,
+        );
       }
     }
   }

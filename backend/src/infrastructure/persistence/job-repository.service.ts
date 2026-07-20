@@ -1,6 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { cancelPendingUrls } from '../../domain/job-rules';
 import type { JobStatus } from '../../domain/types/job-status.type';
-import type { UrlStatus } from '../../domain/types/url-status.type';
+import {
+  isTerminalUrlStatus,
+  type UrlStatus,
+} from '../../domain/types/url-status.type';
 import type { IJob } from '../../interfaces/job.interface';
 import type { IJobRepository } from '../../interfaces/job-repository.interface';
 
@@ -22,10 +26,7 @@ export class JobRepositoryService implements IJobRepository {
   }
 
   async updateStatus(id: number, status: JobStatus): Promise<void> {
-    const job = this.jobs.get(id);
-    if (!job) {
-      throw new NotFoundException(`Job ${id} not found`);
-    }
+    const job = this.requireJob(id);
     // Do not overwrite terminal cancelled state with later worker results
     if (job.status === 'cancelled' && status !== 'cancelled') {
       return;
@@ -41,18 +42,13 @@ export class JobRepositoryService implements IJobRepository {
     httpStatus?: number,
     error?: string,
   ): Promise<void> {
-    const job = this.jobs.get(jobId);
-    if (!job) {
-      throw new NotFoundException(`Job ${jobId} not found`);
-    }
-
+    const job = this.requireJob(jobId);
     const urlEntity = job.urls.find((u) => u.url === url);
     if (!urlEntity) {
       throw new NotFoundException(`URL ${url} not found in job ${jobId}`);
     }
 
     // pending must not revive a cancelled URL; completed/failed/in_progress may
-    // (worker already started the URL before cancel arrived on master)
     if (urlEntity.status === 'cancelled' && status === 'pending') {
       return;
     }
@@ -67,11 +63,7 @@ export class JobRepositoryService implements IJobRepository {
     if (status === 'in_progress' && !urlEntity.startedAt) {
       urlEntity.startedAt = new Date();
     }
-    if (
-      status === 'completed' ||
-      status === 'failed' ||
-      status === 'cancelled'
-    ) {
+    if (isTerminalUrlStatus(status)) {
       urlEntity.endedAt = urlEntity.endedAt ?? new Date();
     }
     job.updatedAt = new Date();
@@ -85,20 +77,19 @@ export class JobRepositoryService implements IJobRepository {
 
     job.status = 'cancelled';
     job.updatedAt = new Date();
-
-    // Only not-started URLs are cancelled. in_progress may still complete.
-    for (const url of job.urls) {
-      if (url.status === 'pending') {
-        url.status = 'cancelled';
-        // cancelled before start — no startedAt; endedAt marks cancel time
-        url.endedAt = new Date();
-      }
-    }
-
+    cancelPendingUrls(job);
     return job;
   }
 
   async delete(id: number): Promise<boolean> {
     return this.jobs.delete(id);
+  }
+
+  private requireJob(id: number): IJob {
+    const job = this.jobs.get(id);
+    if (!job) {
+      throw new NotFoundException(`Job ${id} not found`);
+    }
+    return job;
   }
 }

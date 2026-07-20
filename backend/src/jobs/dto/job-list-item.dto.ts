@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import type { JobStatus } from '../../domain/types/job-status.type';
+import { JOB_STATUSES, type JobStatus } from '../../domain/types/job-status.type';
 
 export class JobUrlStatsDto {
   @ApiProperty({ description: 'URLs completed successfully (status=completed)' })
@@ -26,9 +26,7 @@ export class JobListItemDto {
   @ApiProperty()
   createdAt: Date;
 
-  @ApiProperty({
-    enum: ['pending', 'in_progress', 'completed', 'cancelled', 'failed'],
-  })
+  @ApiProperty({ enum: JOB_STATUSES })
   status: JobStatus;
 
   @ApiProperty({ description: 'Total number of URLs in the job' })

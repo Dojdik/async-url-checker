@@ -19,6 +19,8 @@ import type {
 } from './dto/job-detail.dto';
 import type { IJobUrl } from '../interfaces/job-url.interface';
 import type { UrlStatus } from '../domain/types/url-status.type';
+import { canCancelJob } from '../domain/types/job-status.type';
+import { countUrlStatuses } from '../domain/job-rules';
 
 @Injectable()
 export class JobService {
@@ -66,46 +68,21 @@ export class JobService {
   }
 
   private buildUrlStats(job: IJob): JobUrlStatsDto {
-    const stats: JobUrlStatsDto = {
-      succeeded: 0,
-      failed: 0,
-      pending: 0,
-      in_progress: 0,
-      cancelled: 0,
+    const counts = countUrlStatuses(job.urls);
+    return {
+      succeeded: counts.completed,
+      failed: counts.failed,
+      pending: counts.pending,
+      in_progress: counts.in_progress,
+      cancelled: counts.cancelled,
     };
-
-    for (const url of job.urls) {
-      switch (url.status) {
-        case 'completed':
-          stats.succeeded += 1;
-          break;
-        case 'failed':
-          stats.failed += 1;
-          break;
-        case 'pending':
-          stats.pending += 1;
-          break;
-        case 'in_progress':
-          stats.in_progress += 1;
-          break;
-        case 'cancelled':
-          stats.cancelled += 1;
-          break;
-      }
-    }
-
-    return stats;
   }
 
   /**
    * GET /api/jobs/:id — detailed job with per-URL status, HTTP code, error, timings.
    */
   async find(id: number): Promise<JobDetailDto> {
-    const job = await this.repository.findById(id);
-    if (!job) {
-      throw new NotFoundException('Job not found');
-    }
-    return this.toDetail(job);
+    return this.toDetail(await this.getJobOrThrow(id));
   }
 
   private toDetail(job: IJob): JobDetailDto {
@@ -152,21 +129,22 @@ export class JobService {
    * DELETE /api/jobs/:id — mark cancelled and stop not-started URLs.
    */
   async cancel(id: number): Promise<IJob> {
-    const job = await this.repository.findById(id);
-    if (!job) {
-      throw new NotFoundException('Job not found');
-    }
+    const job = await this.getJobOrThrow(id);
 
-    if (
-      job.status === 'completed' ||
-      job.status === 'failed' ||
-      job.status === 'cancelled'
-    ) {
+    if (!canCancelJob(job.status)) {
       throw new ConflictException(
         `Job cannot be cancelled in status "${job.status}"`,
       );
     }
 
     return this.dispatcher.cancelJob(id);
+  }
+
+  private async getJobOrThrow(id: number): Promise<IJob> {
+    const job = await this.repository.findById(id);
+    if (!job) {
+      throw new NotFoundException('Job not found');
+    }
+    return job;
   }
 }

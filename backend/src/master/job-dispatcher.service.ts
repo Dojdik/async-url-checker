@@ -7,19 +7,22 @@ import type { JobStatus } from '../domain/types/job-status.type';
 import type { UrlStatus } from '../domain/types/url-status.type';
 import type { IUrlProgressPayload } from '../interfaces/worker-message.interface';
 import { JOB_QUEUE, JOB_REPOSITORY } from '../common/tokens';
+import { toErrorMessage } from '../common/errors';
 import { WorkerPoolService } from './worker-pool.service';
+
+interface JobUrlResult {
+  url: string;
+  status: UrlStatus;
+  httpStatus?: number;
+  error?: string;
+}
 
 interface JobCompleteResult {
   status: JobStatus;
   totalUrls?: number;
   failedUrls?: number;
   cancelledUrls?: number;
-  results?: Array<{
-    url: string;
-    status: UrlStatus;
-    httpStatus?: number;
-    error?: string;
-  }>;
+  results?: JobUrlResult[];
 }
 
 /**
@@ -62,13 +65,16 @@ export class JobDispatcherService {
     );
 
     this.eventEmitter.on('job.timeout', ({ jobId }: { jobId: number }) => {
-      void this.onJobTimeout(jobId);
+      void this.failJobUnlessCancelled(jobId, `Job ${jobId} timed out`);
     });
 
     this.eventEmitter.on(
       'worker.error',
       ({ jobId, error }: { jobId: number; error?: unknown }) => {
-        void this.onJobError(jobId, error);
+        void this.failJobUnlessCancelled(
+          jobId,
+          `Job ${jobId} failed on worker: ${toErrorMessage(error)}`,
+        );
       },
     );
   }
@@ -113,9 +119,7 @@ export class JobDispatcherService {
       );
     } catch (error) {
       this.logger.warn(
-        `Failed to apply URL progress for job ${jobId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        `Failed to apply URL progress for job ${jobId}: ${toErrorMessage(error)}`,
       );
     }
   }
@@ -124,54 +128,70 @@ export class JobDispatcherService {
     jobId: number,
     result?: JobCompleteResult,
   ): Promise<void> {
-    this.logger.log(`Job ${jobId} finished with status ${result?.status ?? 'completed'}`);
+    this.logger.log(
+      `Job ${jobId} finished with status ${result?.status ?? 'completed'}`,
+    );
 
     try {
       const existing = await this.repository.findById(jobId);
-      // Master-side cancel already applied — merge URL results carefully
-      if (existing?.status === 'cancelled') {
-        if (result?.results?.length) {
-          for (const item of result.results) {
-            if (item.status === 'completed' || item.status === 'failed') {
-              await this.repository.updateUrlStatus(
-                jobId,
-                item.url,
-                item.status,
-                item.httpStatus,
-                item.error,
-              );
-            }
-          }
-        }
-        // keep cancelled job status
-      } else if (result?.results?.length) {
-        for (const item of result.results) {
-          await this.repository.updateUrlStatus(
-            jobId,
-            item.url,
-            item.status,
-            item.httpStatus,
-            item.error,
-          );
-        }
-        const status = result.status ?? 'completed';
-        await this.repository.updateStatus(jobId, status);
-      } else {
-        await this.repository.updateStatus(jobId, result?.status ?? 'completed');
+      const alreadyCancelled = existing?.status === 'cancelled';
+
+      await this.applyUrlResults(jobId, result?.results, {
+        onlyFinished: alreadyCancelled,
+      });
+
+      if (!alreadyCancelled) {
+        await this.repository.updateStatus(
+          jobId,
+          result?.status ?? 'completed',
+        );
       }
     } catch (error) {
       this.logger.error(
-        `Failed to persist completion for job ${jobId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        `Failed to persist completion for job ${jobId}: ${toErrorMessage(error)}`,
       );
     }
 
     void this.processQueue();
   }
 
-  private async onJobTimeout(jobId: number): Promise<void> {
-    this.logger.warn(`Job ${jobId} timed out`);
+  /**
+   * Apply worker URL results onto the master repository.
+   * When onlyFinished is true (job already cancelled), keep pending/cancelled
+   * master state and only merge URLs that actually completed or failed.
+   */
+  private async applyUrlResults(
+    jobId: number,
+    results: JobUrlResult[] | undefined,
+    options: { onlyFinished: boolean },
+  ): Promise<void> {
+    if (!results?.length) {
+      return;
+    }
+
+    for (const item of results) {
+      if (
+        options.onlyFinished &&
+        item.status !== 'completed' &&
+        item.status !== 'failed'
+      ) {
+        continue;
+      }
+      await this.repository.updateUrlStatus(
+        jobId,
+        item.url,
+        item.status,
+        item.httpStatus,
+        item.error,
+      );
+    }
+  }
+
+  private async failJobUnlessCancelled(
+    jobId: number,
+    logMessage: string,
+  ): Promise<void> {
+    this.logger.warn(logMessage);
     try {
       const job = await this.repository.findById(jobId);
       if (job?.status !== 'cancelled') {
@@ -179,34 +199,7 @@ export class JobDispatcherService {
       }
     } catch (error) {
       this.logger.error(
-        `Failed to mark job ${jobId} timed out: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-    void this.processQueue();
-  }
-
-  private async onJobError(jobId: number, error?: unknown): Promise<void> {
-    this.logger.error(
-      `Job ${jobId} failed on worker: ${
-        error instanceof Error
-          ? error.message
-          : typeof error === 'object'
-            ? JSON.stringify(error)
-            : String(error)
-      }`,
-    );
-    try {
-      const job = await this.repository.findById(jobId);
-      if (job?.status !== 'cancelled') {
-        await this.repository.updateStatus(jobId, 'failed');
-      }
-    } catch (err) {
-      this.logger.error(
-        `Failed to mark job ${jobId} as failed: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        `Failed to mark job ${jobId} as failed: ${toErrorMessage(error)}`,
       );
     }
     void this.processQueue();
@@ -242,9 +235,7 @@ export class JobDispatcherService {
           await this.workerPool.assignJob(job);
         } catch (error) {
           this.logger.error(
-            `Failed to dispatch job ${job.id}: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
+            `Failed to dispatch job ${job.id}: ${toErrorMessage(error)}`,
           );
           await this.queue.enqueue(job);
           break;
