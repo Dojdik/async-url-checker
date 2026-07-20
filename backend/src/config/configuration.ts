@@ -49,7 +49,7 @@ function assertRange(
 }
 
 /** Nest ConfigModule `load` factory — single source of truth for env defaults. */
-export default (): AppConfiguration => {
+export function loadConfiguration(): AppConfiguration {
   const config: AppConfiguration = {
     port: intEnv('PORT', 3001),
     workersCount: intEnv('WORKERS_COUNT', 16),
@@ -77,4 +77,4 @@ export default (): AppConfiguration => {
   );
 
   return config;
-};
+}
