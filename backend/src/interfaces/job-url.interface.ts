@@ -5,6 +5,8 @@ export interface IJobUrl {
   status: UrlStatus;
   httpStatus?: number;
   error?: string;
-  startedAt: Date;
+  /** Set when processing actually starts (in_progress). */
+  startedAt?: Date;
+  /** Set when processing finishes (success/error/cancelled). */
   endedAt?: Date;
 }

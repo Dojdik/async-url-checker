@@ -181,6 +181,7 @@ export class WorkerProcessor implements OnModuleInit {
 
     try {
       urlEntity.status = 'in_progress';
+      urlEntity.startedAt = new Date();
       await this.repository.updateUrlStatus(jobId, urlEntity.url, 'in_progress');
       this.reportUrlProgress(jobId, urlEntity);
 
@@ -214,6 +215,9 @@ export class WorkerProcessor implements OnModuleInit {
       urlEntity.status = 'failed';
       urlEntity.error = message;
       urlEntity.endedAt = new Date();
+      if (!urlEntity.startedAt) {
+        urlEntity.startedAt = urlEntity.endedAt;
+      }
 
       await this.repository.updateUrlStatus(
         jobId,

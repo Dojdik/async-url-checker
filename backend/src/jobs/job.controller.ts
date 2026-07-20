@@ -27,13 +27,21 @@ export class JobController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'List jobs' })
+  @ApiOperation({
+    summary: 'List jobs',
+    description:
+      'Returns brief job info: id, createdAt, status, urlsCount, and success/error stats.',
+  })
   async listJobs(@Query() listDto: JobsListDto) {
     return this.jobService.findAll(listDto.offset, listDto.count);
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get job by id' })
+  @ApiOperation({
+    summary: 'Get job details',
+    description:
+      'Per-URL: status (pending|in_progress|success|error|cancelled), HTTP status, error message, start/end times and duration.',
+  })
   async getJob(@Param('id', ParseIntPipe) id: number) {
     return this.jobService.find(id);
   }

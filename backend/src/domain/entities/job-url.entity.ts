@@ -7,7 +7,7 @@ export class JobUrlEntity implements IJobUrl {
     public status: UrlStatus = 'pending',
     public httpStatus?: number,
     public error?: string,
-    public startedAt: Date = new Date(),
+    public startedAt?: Date,
     public endedAt?: Date,
   ) {}
 }

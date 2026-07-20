@@ -64,12 +64,15 @@ export class JobRepositoryService implements IJobRepository {
     if (error !== undefined) {
       urlEntity.error = error;
     }
+    if (status === 'in_progress' && !urlEntity.startedAt) {
+      urlEntity.startedAt = new Date();
+    }
     if (
       status === 'completed' ||
       status === 'failed' ||
       status === 'cancelled'
     ) {
-      urlEntity.endedAt = new Date();
+      urlEntity.endedAt = urlEntity.endedAt ?? new Date();
     }
     job.updatedAt = new Date();
   }
@@ -87,6 +90,7 @@ export class JobRepositoryService implements IJobRepository {
     for (const url of job.urls) {
       if (url.status === 'pending') {
         url.status = 'cancelled';
+        // cancelled before start — no startedAt; endedAt marks cancel time
         url.endedAt = new Date();
       }
     }
