@@ -1,18 +1,34 @@
 /** Domain types aligned with backend DTOs. */
 
-export type JobStatus =
-  | 'pending'
-  | 'in_progress'
-  | 'completed'
-  | 'cancelled'
-  | 'failed';
+export const JobStatus = {
+  Pending: 'pending',
+  InProgress: 'in_progress',
+  Completed: 'completed',
+  Cancelled: 'cancelled',
+  Failed: 'failed',
+} as const;
 
-export type ApiUrlStatus =
-  | 'pending'
-  | 'in_progress'
-  | 'success'
-  | 'error'
-  | 'cancelled';
+export type JobStatus = (typeof JobStatus)[keyof typeof JobStatus];
+
+/** API-facing URL status (completed→success, failed→error). */
+export const ApiUrlStatus = {
+  Pending: 'pending',
+  InProgress: 'in_progress',
+  Success: 'success',
+  Error: 'error',
+  Cancelled: 'cancelled',
+} as const;
+
+export type ApiUrlStatus = (typeof ApiUrlStatus)[keyof typeof ApiUrlStatus];
+
+export const RequestStatus = {
+  Idle: 'idle',
+  Loading: 'loading',
+  Succeeded: 'succeeded',
+  Failed: 'failed',
+} as const;
+
+export type RequestStatus = (typeof RequestStatus)[keyof typeof RequestStatus];
 
 export interface JobUrlStats {
   succeeded: number;
@@ -57,8 +73,6 @@ export interface JobCreated {
   createdAt: string;
 }
 
-export type RequestStatus = 'idle' | 'loading' | 'succeeded' | 'failed';
-
 export function isJobActive(status: JobStatus): boolean {
-  return status === 'pending' || status === 'in_progress';
+  return status === JobStatus.Pending || status === JobStatus.InProgress;
 }
